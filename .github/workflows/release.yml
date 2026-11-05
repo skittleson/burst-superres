@@ -41,7 +41,13 @@ jobs:
       # The tinyjs installer refuses to run without the WebKitGTK runtime.
       - name: Install WebKitGTK (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update -q && sudo apt-get install -y -q libwebkit2gtk-4.1-0
+        timeout-minutes: 8
+        run: |
+          for i in 1 2 3; do
+            sudo apt-get update -q && sudo apt-get install -y -q -o Acquire::Retries=3 libwebkit2gtk-4.1-0 && exit 0
+            sleep 15
+          done
+          exit 1
 
       - name: Install tinyjs (macOS, Linux)
         if: runner.os != 'Windows'
