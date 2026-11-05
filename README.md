@@ -15,7 +15,7 @@
 
 ## Download
 
-Get the latest version from [Releases](https://github.com/spencerkittleson/burst-superres/releases/latest):
+Get the latest version from [Releases](https://github.com/skittleson/burst-superres/releases/latest):
 
 | Your computer | File |
 |---|---|
