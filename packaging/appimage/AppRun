@@ -1,0 +1,25 @@
+#!/bin/sh
+# AppImage entry point. The tinyjs binary sits in $APPDIR/burst-superres/
+# next to its launcher, exactly as in the release tarball.
+HERE="$(dirname "$(readlink -f "$0")")"
+ID=com.docodethatmatters.burstsuperres
+
+# On first run the tinyjs runtime writes ~/.local/share/applications/$ID.desktop
+# with Exec= pointing into this AppImage's temporary mount (/tmp/.mount_*),
+# which is gone after the app exits. Once it appears, point it at the
+# .AppImage file itself and give it an icon that outlives the mount.
+if [ -n "$APPIMAGE" ]; then
+  (
+    DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
+    ENTRY="$DATA/applications/$ID.desktop"
+    ICON="$DATA/icons/$ID.png"
+    i=0
+    while [ $i -lt 20 ] && ! grep -qs "$HERE" "$ENTRY"; do sleep 0.5; i=$((i + 1)); done
+    if grep -qs "$HERE" "$ENTRY"; then
+      mkdir -p "$(dirname "$ICON")" && cp -f "$HERE/burst-superres.png" "$ICON" 2>/dev/null
+      sed -i -e "s|^Exec=.*|Exec=\"$APPIMAGE\" %u|" -e "s|^Icon=.*|Icon=$ICON|" "$ENTRY"
+    fi
+  ) &
+fi
+
+exec "$HERE/burst-superres/burst-superres" "$@"

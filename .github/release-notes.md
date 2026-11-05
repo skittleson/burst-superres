@@ -6,18 +6,18 @@ Merge a burst of photos of the same static scene into one image with twice the w
 |---|---|
 | macOS 15 or newer (Apple Silicon and Intel) | `burst-superres-*-macos-universal.zip` |
 | Windows 10 or 11 (x64) | `burst-superres-*-windows-x86_64.zip` |
-| Linux x86_64 (Ubuntu 22.04, Debian 12 or newer) | `burst-superres-*-linux-x86_64.tar.gz` |
-| Linux ARM64 | `burst-superres-*-linux-arm64.tar.gz` |
+| Linux x86_64 (Ubuntu 22.04, Debian 12 or newer) | `burst-superres-*-linux-x86_64.AppImage` or `.tar.gz` |
+| Linux ARM64 | `burst-superres-*-linux-arm64.AppImage` or `.tar.gz` |
 
 **macOS:** unzip, then move "Burst Super-Res" to Applications. The app is not notarized. The first time, right-click it and pick **Open**. On macOS 15, if that does not work, open **System Settings > Privacy & Security** and click **Open Anyway**.
 
 **Windows:** unzip the folder and run `burst-superres.exe`. The app is not code-signed. If SmartScreen shows "Windows protected your PC", click **More info > Run anyway**. It needs the WebView2 runtime (included in Windows 11).
 
-**Linux:** `tar xzf burst-superres-*-linux-*.tar.gz` and run `burst-superres/burst-superres`. It needs `libwebkit2gtk-4.1-0` (`sudo apt install libwebkit2gtk-4.1-0` on Debian/Ubuntu).
+**Linux:** the AppImage is one file: `chmod +x burst-superres-*.AppImage` and run it. On first run it adds itself to your app menu. Or use the tarball: `tar xzf burst-superres-*-linux-*.tar.gz` and run `burst-superres/burst-superres`. Both need `libwebkit2gtk-4.1-0` (`sudo apt install libwebkit2gtk-4.1-0` on Debian/Ubuntu); the AppImage does not bundle WebKitGTK.
 
 ## Status
 
-- Linux x86_64: tested end to end (merge, compare, save) on Pop!_OS 24.04.
+- Linux x86_64: tested end to end (merge, compare, save) on Pop!_OS 24.04, as tarball and AppImage.
 - macOS, Windows and Linux ARM64: built by GitHub Actions, **not tested yet**. Please open an issue if something does not work.
 
 ## Honest limits

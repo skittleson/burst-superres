@@ -21,10 +21,10 @@ Get the latest version from [Releases](https://github.com/skittleson/burst-super
 |---|---|
 | macOS 15 or newer (Apple Silicon and Intel) | `burst-superres-*-macos-universal.zip` |
 | Windows 10 or 11 (x64) | `burst-superres-*-windows-x86_64.zip` |
-| Linux x86_64 (Ubuntu 22.04, Debian 12 or newer) | `burst-superres-*-linux-x86_64.tar.gz` |
-| Linux ARM64 | `burst-superres-*-linux-arm64.tar.gz` |
+| Linux x86_64 (Ubuntu 22.04, Debian 12 or newer) | `burst-superres-*-linux-x86_64.AppImage` or `.tar.gz` |
+| Linux ARM64 | `burst-superres-*-linux-arm64.AppImage` or `.tar.gz` |
 
-The builds are not signed. On macOS, right-click the app and pick **Open** the first time (or **System Settings > Privacy & Security > Open Anyway**). On Windows, click **More info > Run anyway** if SmartScreen warns you. On Linux, install `libwebkit2gtk-4.1-0` first.
+The builds are not signed. On macOS, right-click the app and pick **Open** the first time (or **System Settings > Privacy & Security > Open Anyway**). On Windows, click **More info > Run anyway** if SmartScreen warns you. On Linux, install `libwebkit2gtk-4.1-0` first, then `chmod +x` the AppImage and run it (it adds itself to your app menu on first run). The AppImage does not bundle WebKitGTK.
 
 ## How to use it
 
@@ -208,11 +208,12 @@ It adds the photos, merges, renders the compare view, saves, writes a report to 
 | Platform | Status |
 |---|---|
 | Linux x86_64 (Pop!_OS 24.04, WebKitGTK 2.52, Wayland) | Tested end to end: `tinyjs dev`, `tinyjs build`, and the built binary with the smoke test, on tinyjs 0.51.1 and 0.70.3. The binaries need glibc 2.35 or newer (Ubuntu 22.04 and later). |
-| Linux ARM64 | Built by GitHub Actions on Ubuntu 22.04. **Not tested.** |
+| Linux AppImage x86_64 | Built from the release tarball with `packaging/appimage/make-appimage.sh`. Tested: launch, merge, save, and the app-menu entry points at the `.AppImage` file. |
+| Linux ARM64 (tarball and AppImage) | Built by GitHub Actions on Ubuntu 22.04. **Not tested.** |
 | macOS 15+ (universal) | Built by GitHub Actions (`tinyjs publish --universal`). Ad-hoc signed, not notarized. **Not tested.** |
 | Windows 10/11 x64 | Built by GitHub Actions (`tinyjs.cmd publish`). Not code-signed. **Not tested.** Check the Blob-URL worker and saving in WebView2 first. |
 
-Releases come from `.github/workflows/release.yml`. Push a tag like `v0.1.0` to build all four and publish them with checksums.
+Releases come from `.github/workflows/release.yml`. Push a tag like `v0.1.0` to build every platform (plus Linux AppImages) and publish them with checksums.
 
 The code uses no platform-only APIs. `Uint8Array.prototype.toBase64` has a fallback for older webviews.
 

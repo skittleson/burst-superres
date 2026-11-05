@@ -30,8 +30,8 @@ jobs:
       matrix:
         include:
           # Linux: build on 22.04 so the binaries load on glibc 2.35+ distros.
-          - { os: ubuntu-22.04, target: linux-x86_64 }
-          - { os: ubuntu-22.04-arm, target: linux-arm64 }
+          - { os: ubuntu-22.04, target: linux-x86_64, appimage: x86_64 }
+          - { os: ubuntu-22.04-arm, target: linux-arm64, appimage: aarch64 }
           - { os: macos-14, target: macos-universal, args: --universal }
           - { os: windows-latest, target: windows-x86_64 }
     runs-on: ${{ matrix.os }}
@@ -97,6 +97,20 @@ jobs:
             echo "$b needs $v"
             [ "$(printf '%s\nGLIBC_2.35\n' "$v" | sort -V | tail -1)" = "GLIBC_2.35" ]
           done
+
+      # AppImage from the same tarball. WebKitGTK stays a system dependency.
+      - name: AppImage (Linux)
+        if: runner.os == 'Linux'
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/appimagetool" \
+            "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${{ matrix.appimage }}.AppImage"
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          ver=$(node -p "require('./tinyjs.json').version")
+          APPIMAGETOOL="$RUNNER_TEMP/appimagetool" packaging/appimage/make-appimage.sh \
+            out/burst-superres-$ver-${{ matrix.target }}.tar.gz ${{ matrix.appimage }} \
+            out/burst-superres-$ver-${{ matrix.target }}.AppImage
 
       - uses: actions/upload-artifact@v4
         with:

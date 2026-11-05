@@ -373,7 +373,7 @@ document.addEventListener('dragover', (e) => { e.preventDefault(); drop.classLis
 document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) drop.classList.remove('over'); });
 
 function about() {
-  tiny.dialog.alert('Burst Super-Res 0.1.0',
+  tiny.dialog.alert('Burst Super-Res 0.1.1',
     'Merges a burst of photos of a static scene into one image with twice the width and height.\n\n' +
     'Free tool from the Sony A6000/A6400 Hacking Guide (chapter 7, "Super-resolution from a burst") by Do Code That Matters.');
 }

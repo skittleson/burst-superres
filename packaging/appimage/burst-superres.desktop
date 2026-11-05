@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Burst Super-Res
+Comment=Merge a burst of photos into one 2x image
+Exec=burst-superres
+Icon=burst-superres
+Categories=Graphics;Photography;
+Terminal=false
+StartupWMClass=com.docodethatmatters.burstsuperres
