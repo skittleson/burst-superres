@@ -1,0 +1,117 @@
+name: release
+
+# Push a tag like v0.1.0 to build every platform and publish a GitHub release.
+# Run it by hand (workflow_dispatch) to build the artifacts without releasing.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  TINYJS_VERSION: v0.70.3
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npm test
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux: build on 22.04 so the binaries load on glibc 2.35+ distros.
+          - { os: ubuntu-22.04, target: linux-x86_64 }
+          - { os: ubuntu-22.04-arm, target: linux-arm64 }
+          - { os: macos-14, target: macos-universal, args: --universal }
+          - { os: windows-latest, target: windows-x86_64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tinyjs (macOS, Linux)
+        if: runner.os != 'Windows'
+        run: |
+          curl -fsSL https://tinyjs.app/install | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.tinyjs" >> "$GITHUB_PATH"
+
+      - name: Install tinyjs (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          irm https://tinyjs.app/install.ps1 | iex
+          $dir = Join-Path $env:LOCALAPPDATA 'tinyjs'
+          Add-Content $env:GITHUB_PATH $dir
+          Add-Content $env:GITHUB_PATH (Join-Path $dir 'bin')
+
+      - name: Build (macOS, Linux)
+        if: runner.os != 'Windows'
+        run: |
+          tinyjs version
+          tinyjs publish ${{ matrix.args }}
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          tinyjs.cmd version
+          tinyjs.cmd publish
+
+      # One predictable name per platform; the auto-update manifest is not used.
+      - name: Collect
+        shell: bash
+        run: |
+          mkdir -p out
+          ver=$(node -p "require('./tinyjs.json').version")
+          for f in dist/publish/*; do
+            case "$f" in
+              *manifest.json) ;;
+              *.tar.gz) cp "$f" "out/burst-superres-$ver-${{ matrix.target }}.tar.gz" ;;
+              *.zip)    cp "$f" "out/burst-superres-$ver-${{ matrix.target }}.zip" ;;
+            esac
+          done
+          ls -la out
+          test -n "$(ls out)"
+
+      - name: Check the Linux glibc floor (2.35)
+        if: runner.os == 'Linux'
+        run: |
+          tar xzf out/*.tar.gz -C "$RUNNER_TEMP"
+          for b in "$RUNNER_TEMP"/burst-superres/burst-superres "$RUNNER_TEMP"/burst-superres/launcher; do
+            v=$(objdump -T "$b" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
+            echo "$b needs $v"
+            [ "$(printf '%s\nGLIBC_2.35\n' "$v" | sort -V | tail -1)" = "GLIBC_2.35" ]
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: out/*
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts, merge-multiple: true }
+      - name: Checksums
+        run: cd artifacts && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" artifacts/* \
+            --title "Burst Super-Res $GITHUB_REF_NAME" \
+            --notes-file .github/release-notes.md
