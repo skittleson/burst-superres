@@ -478,6 +478,27 @@ function createSRCore() {
     return m & 1 ? a[m >> 1] : 0.5 * (a[(m >> 1) - 1] + a[m >> 1]);
   }
 
+  /**
+   * How much the merge changed the picture: compares `merged` with the
+   * reference photo upscaled 2× on its own, on `sampleRows` evenly spaced
+   * output rows (cheap; no second full-size image). Luma levels, 0..255.
+   * Returns { meanAbs, pctOver } where pctOver = % of pixels off by > `threshold`.
+   */
+  function compareToSingle(merged, ref, { scale = 2, sampleRows = 96, threshold = 3 } = {}) {
+    const W = merged.width, H = merged.height, rows = Math.min(sampleRows, H);
+    let sum = 0, over = 0, n = 0;
+    for (let k = 0; k < rows; k++) {
+      const Y = Math.min(H - 1, Math.round((k + 0.5) * H / rows));
+      const single = resampleRegion(ref, { scale, x: 0, y: Y, width: W, height: 1 }).data;
+      const o = Y * W * 4, m = merged.data;
+      for (let i = 0; i < W * 4; i += 4) {
+        const d = Math.abs(0.299 * (m[o + i] - single[i]) + 0.587 * (m[o + i + 1] - single[i + 1]) + 0.114 * (m[o + i + 2] - single[i + 2]));
+        sum += d; if (d > threshold) over++; n++;
+      }
+    }
+    return { meanAbs: sum / n, pctOver: 100 * over / n, threshold };
+  }
+
   // ---------- metrics (luma, border excluded) ----------
 
   function borderLuma(img, border) {
@@ -550,7 +571,7 @@ function createSRCore() {
 
   return {
     MODES, IDENTITY, translation, applyWarp, toLuma, buildPyramid, sharpness,
-    register, registerBurst, lanczos3, resampleRegion, merge, psnr, ssim, downsampleBox,
+    register, registerBurst, lanczos3, resampleRegion, merge, compareToSingle, psnr, ssim, downsampleBox,
   };
 }
 

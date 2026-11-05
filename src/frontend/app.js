@@ -36,9 +36,11 @@ function workerMain(SR) {
           type: 'aligned', refIndex: reg.refIndex,
           details: reg.details.map((d) => ({ warp: d.warp, fitRms: d.fitRms, inliers: d.inliers })),
         });
-        const out = SR.merge(frames, reg.warps, { mode: msg.mode, refIndex: reg.refIndex, onProgress: step(0.35, 0.65) });
+        const out = SR.merge(frames, reg.warps, { mode: msg.mode, refIndex: reg.refIndex, onProgress: step(0.35, 0.62) });
         ref = frames[reg.refIndex];
-        postMessage({ type: 'done', width: out.width, height: out.height, buffer: out.data.buffer }, [out.data.buffer]);
+        postMessage({ type: 'progress', p: 0.98, label: 'Comparing with one photo' });
+        const diff = SR.compareToSingle(out, ref);
+        postMessage({ type: 'done', width: out.width, height: out.height, diff, buffer: out.data.buffer }, [out.data.buffer]);
       } else if (msg.type === 'before' && ref) {
         const r = SR.resampleRegion(ref, { scale: 2, x: msg.x, y: msg.y, width: msg.width, height: msg.height });
         postMessage({ type: 'before', id: msg.id, width: r.width, height: r.height, buffer: r.data.buffer }, [r.data.buffer]);
@@ -163,6 +165,21 @@ function describeWarp(d, w, h, isRef) {
   return s;
 }
 
+// One line on how much the camera moved and how well the photos lined up.
+function alignmentSummary(msg, w, h) {
+  let move = 0, fit = 0;
+  msg.details.forEach((d, i) => {
+    if (i === msg.refIndex) return;
+    const W = d.warp;
+    for (const [x, y] of [[0, 0], [w - 1, 0], [0, h - 1], [w - 1, h - 1]]) {
+      move = Math.max(move, Math.hypot(W.a * x + W.b * y + W.c - x, W.d * x + W.e * y + W.f - y));
+    }
+    fit = Math.max(fit, d.fitRms || 0);
+  });
+  const verdict = fit <= 0.3 ? 'good for merging' : fit <= 1 ? 'usable, expect some softness; below 0.3 px is good' : 'too much movement for a clean merge';
+  return `Camera moved up to ${move.toFixed(1)} px between shots. Worst alignment error: ${fit.toFixed(2)} px (${verdict}).`;
+}
+
 function alignmentWarnings(msg, w, h) {
   const out = [];
   let maxMove = 0;
@@ -188,6 +205,7 @@ async function runMerge() {
 
   setBusy(true);
   $('warnings').innerHTML = '';
+  $('summary').textContent = '';
   state.photos.forEach((p) => { p.meta = `${p.width} × ${p.height}`; p.bad = p.isRef = false; });
   setProgress(0);
   const started = performance.now();
@@ -204,6 +222,7 @@ async function runMerge() {
         p.bad = !p.isRef && d.inliers > 0 && d.fitRms > 0.3;
       });
       renderList();
+      $('summary').textContent = alignmentSummary(msg, w, h);
       $('warnings').innerHTML = alignmentWarnings(msg, w, h).map((t) => `<p>${esc(t)}</p>`).join('');
     } else if (msg.type === 'done') {
       showResult(msg, w, h);
@@ -228,6 +247,8 @@ function showResult(msg, inputW, inputH) {
   state.focus = state.focus && state.focus.x < msg.width && state.focus.y < msg.height ? state.focus : { x: msg.width / 2, y: msg.height / 2 };
 
   $('dims').textContent = `${msg.width} × ${msg.height} px, from ${state.photos.length} photos of ${inputW} × ${inputH}`;
+  $('diff').textContent = `Difference from one photo upscaled 2×: ${msg.diff.meanAbs.toFixed(1)} levels on average (of 255); ` +
+    `${msg.diff.pctOver.toFixed(0)}% of pixels changed by more than ${msg.diff.threshold} levels. Sampled on 96 rows.`;
   $('empty').hidden = true;
   $('view').hidden = false;
   renderCompare();
@@ -404,6 +425,8 @@ tiny.api.call('selftestConfig').then(async (cfg) => {
     report.mergeMs = Math.round(performance.now() - t);
     report.status = $('status').textContent;
     report.dims = $('dims').textContent;
+    report.summary = $('summary').textContent;
+    report.diff = $('diff').textContent;
     report.photos = state.photos.map((p) => p.meta);
     report.warnings = [...document.querySelectorAll('#warnings p')].map((p) => p.textContent);
     await stage('merge ok');

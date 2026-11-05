@@ -47,6 +47,8 @@ button.primary:hover:not(:disabled) { background: #f0b456; }
 .progress div { height: 100%; width: 0; background: var(--accent); transition: width .15s; }
 .status { font-size: 12.5px; color: var(--muted); min-height: 1.5em; }
 .status.err { color: var(--err); }
+.summary { font-size: 12.5px; color: #aab0bb; }
+.summary:empty, #diff:empty { display: none; }
 #warnings p { font-size: 12.5px; color: var(--warn); background: #2a2416; border-radius: 6px; padding: 6px 9px; margin-bottom: 6px; }
 .note { font-size: 12.5px; color: #aab0bb; background: #191b21; border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; margin-top: auto; }
 

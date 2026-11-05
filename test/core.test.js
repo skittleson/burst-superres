@@ -146,6 +146,15 @@ test('registered mean of 4 shifted + rotated frames beats a single upscaled fram
   assert.ok(mean > single + 0.3, `mean ${mean.toFixed(2)} dB vs single ${single.toFixed(2)} dB`);
 });
 
+test('compareToSingle: zero for identical frames, non-zero once frames differ', () => {
+  const f = waves(80, 60, 5);
+  const same = SR.compareToSingle(SR.merge([f, f], [SR.IDENTITY, SR.IDENTITY]), f);
+  assert.ok(same.meanAbs < 0.5 && same.pctOver === 0, JSON.stringify(same));
+  const bad = { width: 80, height: 60, data: new Uint8ClampedArray(f.data.length).fill(255) };
+  const diff = SR.compareToSingle(SR.merge([f, bad], [SR.IDENTITY, SR.IDENTITY]), f);
+  assert.ok(diff.meanAbs > 20 && diff.pctOver > 50, JSON.stringify(diff));
+});
+
 test('merge rejects unknown modes', () => {
   const f = waves(8, 8);
   assert.throws(() => SR.merge([f], [SR.IDENTITY], { mode: 'ai' }), /Unknown merge mode/);
