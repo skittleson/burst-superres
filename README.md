@@ -1,25 +1,56 @@
 # Burst Super-Res
 
-A small desktop app for macOS, Windows and Linux. It merges a burst of photos of the same static scene into one image with twice the width and height.
+**Merge a burst of photos of the same scene into one image with twice the width and height.** A small, free desktop app for macOS, Windows and Linux, from the [Sony A6000/A6400 Hacking Guide](https://dctmlab.taila665d5.ts.net/) by [Do Code That Matters](https://docodethatmatters.com/).
 
-It is a free tool from the [Sony A6000/A6400 Hacking Guide](https://dctmlab.taila665d5.ts.net/) by [Do Code That Matters](https://docodethatmatters.com/). Chapter 7 of the guide, "Super-resolution from a burst", is where the method started.
+![Burst Super-Res merging a real 5-shot Sony A6000 burst, with the before/after slider](docs/media/app-real-burst.jpg)
 
-![One photo upscaled 2x next to 4 photos merged](docs/media/before-after-landscape.png)
+*A real 5-shot A6000 burst of a canyon. The app aligned the shots to 0.18 px, merged them to 12000 x 8000 px in 37 s, and shows "one photo upscaled" left of the slider and "merged" right of it.*
 
-## What it does
+- **Drop in 2 to 8 photos.** JPEG or PNG, straight from the camera.
+- **Sub-pixel alignment.** It corrects small shifts and slight rotation between shots, and it tells you how well the shots lined up.
+- **Exactly 2x per side.** Four 6000 x 4000 photos give one 12000 x 8000 image. The app shows real pixel dimensions, not a megapixel claim.
+- **Before/after slider.** Click any spot on the overview and wipe between one photo upscaled 2x and the merge, at 1:1, 2x or 4x zoom.
+- **Numbers, not adjectives.** Camera movement, alignment error, and how much the merge changed the picture.
+- **Private and offline.** Your photos never leave your computer. No account, no upload, no nag screen.
 
-1. You drop 2 to 8 JPEG or PNG photos of the same scene into the window.
-2. The app picks the sharpest photo as the reference.
-3. It aligns every other photo to the reference to a fraction of a pixel. It corrects small shifts and slight rotation.
-4. It resamples every photo onto a grid with 2x the width and height (Lanczos-3), then takes the per-pixel mean.
-5. You compare a crop of "one photo upscaled 2x" against "merged" with a slider, then save as JPEG or PNG.
+## How to use it
 
-The app also shows two numbers:
+1. Take a burst of a still scene: a landscape, a building, a product on a table. Use a tripod, or brace the camera. Shoot 4 to 8 frames.
+2. Drop the photos into the window, or click **Choose photos...**.
+3. Click **Merge**. Read the alignment line: "good for merging" means every shot lined up to 0.3 px or better.
+4. Click a detailed spot on the overview, and drag the slider to compare.
+5. Click **Save JPEG...** or **Save PNG...**.
 
-- **Alignment:** how far the camera moved between shots, and the worst alignment error. Below 0.3 px is good for merging.
-- **Difference from one photo:** the mean luma difference between the merged image and the reference photo upscaled 2x, and the percentage of pixels that changed by more than 3 levels (of 255). It samples 96 rows, so it adds little time. A small number means the merge changed little.
+## Examples
 
-The output is exactly 2x per side. Four 6000 x 4000 photos give one 12000 x 8000 image. The app shows the real pixel dimensions. It does not claim a megapixel number, because the extra pixels do not hold 4x the detail.
+### A real tripod-steady burst: it works
+
+The screenshot above. Five frames from a 13-shot burst (A6000, 20 mm, f/11, ISO 100). The camera moved up to 3.6 px between shots, and every shot aligned to 0.18 px or better. At 200% zoom, the merge has less noise and fewer JPEG block edges than one photo upscaled:
+
+![One photo upscaled 2x next to 5 real photos merged](docs/media/before-after-real-burst.png)
+
+The app reports: "Difference from one photo upscaled 2x: 1.9 levels on average (of 255); 22% of pixels changed by more than 3 levels." A real burst has no "true" high-resolution image, so there is no PSNR for this example.
+
+### A simulated burst with a known answer: +1.07 dB
+
+To measure the gain, I made a 4-shot burst from one real A6000 photo (sub-pixel shifts, sensor-style 2x downsampling, noise, JPEG) and merged it back to full size. Against the original photo, the merge scored +1.07 dB PSNR over one photo upscaled 2x. On the A6400 test photo the gain was +1.25 dB. All runs are in [Measured results](#measured-results).
+
+![One photo upscaled 2x next to 4 simulated photos merged](docs/media/before-after-landscape.png)
+
+### A handheld burst: the app tells you it will not work
+
+These two shots were handheld. The camera moved 64 px and turned 0.11 degrees, and the near cactus and the far hills moved by different amounts (parallax). The app flags it: "Worst alignment error: 4.36 px (too much movement for a clean merge)". Right of the slider you can see the doubled cactus.
+
+![The app warning about a handheld burst, with a ghosted cactus in the merge](docs/media/app-handheld-warning.jpg)
+
+## What the numbers in the app mean
+
+- **Camera moved up to X px between shots.** The largest movement of any photo corner compared to the reference photo. Some movement is good: the small sub-pixel offsets between shots are what add detail. If nothing moved, the app tells you that merging only reduces noise.
+- **Worst alignment error.** How far the measured movement in parts of the photo is from one shift-plus-rotation for the whole photo. Below 0.3 px is good for merging. Up to 1 px is usable but soft. Above 1 px gives ghosting.
+- **Difference from one photo upscaled 2x.** The mean luma difference between the merge and the sharpest photo upscaled 2x on its own, and the percentage of pixels that changed by more than 3 levels (of 255). It samples 96 rows, so it adds little time. A small number means the merge changed little. A large number with a bad alignment error means ghosting, not detail.
+- **Per photo:** "moved x, y px", "turned" (degrees) and "fit" (that photo's alignment error). The sharpest photo is the reference.
+
+The output is exactly 2x per side, and the app shows the real pixel dimensions. It does not claim a megapixel number, because the extra pixels do not hold 4x the detail.
 
 Everything runs on your computer. The app makes no network requests except when you click a link to the guide.
 
@@ -75,23 +106,13 @@ What the numbers say:
 
 These are simulated bursts. A real camera adds demosaicing, an anti-aliasing filter and lens blur. I expect the gain on real tripod bursts to be the same or smaller. I did not measure it, because I do not have a tripod burst with a ground truth.
 
-### My real bursts
+### Handheld bursts in my samples
 
 The two real bursts in `dslrCameraPowerRename` (`samples/` and `sample1/`) are handheld. Between shots the camera moved 52 px and 250 px. The affine fit error was 4.4 px and 21.9 px. I also tested a perspective (homography) fit on the same tile measurements: 0.6 px and 6.3 px RMS. Both are far above the sub-pixel accuracy that a merge needs. The cause is parallax between near bushes and far hills. The app merges these photos, but it shows the "did not line up cleanly" warning, and the result is soft. This is the measured reason for the "tripod or very steady hand" rule.
 
-### A real tripod-steady burst from my library
+### How I found the steady burst
 
-I searched my Immich library for bursts: 732 groups of 3 or more Sony shots taken 3 s or less apart with identical settings. I ran the app's alignment on the first 4 frames of 348 groups (ISO 400 or lower, 4 or more shots). 302 of them were handheld with more than 10 px of alignment error. One burst was steady: `20231228_122526.JPG` to `_13` (A6000, 20 mm, f/11, 1/160 s, ISO 100), the same canyon as above, 3 minutes later.
-
-At full resolution, frames `_4` to `_8` align to 0.18 px or better, with a camera movement of up to 3.6 px. Frames 1 to 3 moved up to 12.8 px and fit to 0.33 to 0.62 px, so I left them out. The merge of the 5 good frames, in the app:
-
-| Input | Output | Merge time | Difference from one photo |
-|---|---|---|---|
-| 5 x 6000 x 4000 | 12000 x 8000 | 36.9 s | 1.9 levels mean; 22% of pixels changed by more than 3 levels |
-
-![One photo upscaled 2x next to 5 real photos merged](docs/media/before-after-real-burst.png)
-
-There is no ground truth for a real burst, so there is no PSNR here. The merged side shows less noise and fewer JPEG block edges. It does not show new fine detail.
+I found the real burst in my Immich library. I searched for bursts: 732 groups of 3 or more Sony shots taken 3 s or less apart with identical settings. I ran the app's alignment on the first 4 frames of 348 groups (ISO 400 or lower, 4 or more shots). 302 of them were handheld, with more than 10 px of alignment error. One burst was steady: `20231228_122526.JPG` to `_13`. At full resolution, frames `_4` to `_8` align to 0.18 px or better. Frames 1 to 3 moved up to 12.8 px and fit to 0.33 to 0.62 px, so I left them out.
 
 ### A method that did not help: shift-and-add
 
@@ -130,6 +151,7 @@ Measured in the app on this Linux machine (WebKitGTK 2.52):
 | 4 x 3000 x 2000 | 6000 x 4000 | 6.9 s | 0.7 s |
 | 4 x 6000 x 4000 (24 MP) | 12000 x 8000 | 31.3 s | 2.5 s |
 | 2 x 6000 x 4000, real handheld pair | 12000 x 8000 | 18.6 s | 2.3 s |
+| 5 x 6000 x 4000, real steady burst | 12000 x 8000 | 36.9 s | not measured |
 | 8 x 6000 x 4000, real burst | 12000 x 8000 | 66.8 s | 29.0 s (PNG) |
 
 The app output and the node output agree to 50.6 dB PSNR. The difference is the JPEG quality 95 encoding of the saved file.
@@ -156,6 +178,8 @@ The benchmark needs `djpeg` and `cjpeg` (libjpeg-turbo) on the PATH. I do not us
 
 `tools/before-after.py` (needs Pillow) makes the labelled comparison image from a benchmark run, or from two crops with `--before` and `--after`.
 
+`tools/ui-preview/serve.js` serves the real frontend to a normal browser, with a stand-in for the tinyjs bridge, for docs screenshots. The screenshots in this README come from it, rendered in headless Chromium at 1280 x 820 (2x). They show the same HTML, CSS and JavaScript as the app, without the native window frame. The URL hash takes the same JSON as `BURST_SELFTEST`.
+
 ### End-to-end smoke test
 
 The app has a self-test that drives the real UI in the real webview. It is off unless you set `BURST_SELFTEST`:
@@ -180,7 +204,6 @@ The code uses no platform-only APIs. `Uint8Array.prototype.toBase64` has a fallb
 
 - Test on macOS and Windows.
 - Shoot a real tripod burst on an A6400. The real burst above is from the A6000.
-- Take an app screenshot (the screen was locked when I tried).
 - Local (per-tile) alignment for handheld bursts with parallax. The tile measurements already exist; the merge would need a smooth warp field.
 - Copy EXIF from the reference photo to the output.
 - Speed: the merge is single-threaded JS. Several workers (one per strip range) or WebGL would make it faster.
