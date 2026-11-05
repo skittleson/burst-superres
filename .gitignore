@@ -3,3 +3,4 @@ dist/
 .build/
 bench-out/
 bench-logs/
+BRIEF.md

@@ -1,7 +1,7 @@
 # Burst Super-Res: design + plan (MVP)
 
-Source of intent: `BRIEF.md` (Spencer). It is complete enough to act as the
-approved description; everything below marked **(my call)** is a builder
+Source of intent: Spencer's project brief (kept out of the public repo). It
+is complete enough to act as the approved description; everything below marked **(my call)** is a builder
 decision, not something Spencer signed off on.
 
 ## Steps

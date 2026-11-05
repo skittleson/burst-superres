@@ -3,7 +3,7 @@
 // (random sub-pixel shift → 2×2 box downsample → noise → JPEG), merge it with
 // every mode, and score each 2× result against the original JPEG.
 //
-//   node tools/bench.js --gt photo.jpg --seed 2 --crop x,y,w,h [--frames 4]
+//   node tools/bench.js --gt photo.jpg --seed 2 --crop x,y,w,h [--frames 4]  (--gt is required)
 //                       [--noise 2] [--quality 92] [--rot 0.5] [--out bench-out/name]
 // --rot gives each non-reference frame a random rotation of up to ±N degrees.
 const fs = require('fs');
@@ -13,7 +13,8 @@ const { PNG } = require('pngjs');
 const SR = require('../src/frontend/sr-core.js');
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((a, v, i, all) => (v.startsWith('--') ? a.concat([[v.slice(2), all[i + 1]]]) : a), []));
-const gtPath = args.gt || '/home/spencerkittleson/repos/sony_camera_tui/pc_remote/test_photo.jpg';
+const gtPath = args.gt;
+if (!gtPath) { console.error('usage: node tools/bench.js --gt photo.jpg [--seed N] [--crop x,y,w,h] ...'); process.exit(2); }
 const seed = +(args.seed || 1), nFrames = +(args.frames || 4), noise = +(args.noise ?? 2), quality = +(args.quality || 92);
 const crop = (args.crop || '2900,1800,600,500').split(',').map(Number);
 const maxRot = +(args.rot || 0);

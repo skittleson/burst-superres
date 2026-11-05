@@ -78,7 +78,7 @@ I have no real tripod burst with a known "true" high-resolution image. So I made
 
 The baseline is the reference frame alone, upscaled 2x with the same Lanczos-3 resampler. That is the honest comparison: the same output size, with and without the burst.
 
-Run it yourself: `npm run bench -- --seed 2` (see `tools/bench.js`). The raw numbers are in `docs/results/`.
+Run it yourself: `npm run bench -- --gt your-photo.jpg --seed 2` (see `tools/bench.js`). The raw numbers are in `docs/results/`.
 
 ### Numbers
 
@@ -170,7 +170,7 @@ The app has no runtime dependencies. Node is only for the tests and the benchmar
 ```sh
 npm install     # dev tools only: pngjs for the benchmark crops
 npm test        # unit tests for alignment and merge math (node --test)
-npm run bench -- --seed 2                                  # A6400 test photo
+npm run bench -- --gt test_photo.jpg --seed 2               # e.g. the A6400 test photo
 npm run bench -- --gt path/to/photo.jpg --crop 400,1400,800,500 --rot 0.5
 ```
 
