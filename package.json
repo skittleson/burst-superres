@@ -1,0 +1,12 @@
+{
+  "name": "burst-superres",
+  "private": true,
+  "description": "Dev tooling only (tests + benchmark). The app itself has zero dependencies.",
+  "scripts": {
+    "test": "node --test 'test/*.test.js'",
+    "bench": "node --max-old-space-size=8192 tools/bench.js"
+  },
+  "devDependencies": {
+    "pngjs": "^7.0.0"
+  }
+}
