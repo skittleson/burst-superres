@@ -15,6 +15,7 @@
     600,
     500
   ],
+  "wobble": 0,
   "shiftsAndRotations": [
     [
       0,
@@ -89,11 +90,11 @@
     0.00916627810176918,
     0.01401394961815991
   ],
-  "registrationMs": 2865,
+  "registrationMs": 2146,
   "results": [
     {
       "method": "single-lanczos",
-      "ms": 808,
+      "ms": 703,
       "psnr": 38.595,
       "ssim": 0.8941,
       "cropPsnr": 38.373,
@@ -101,7 +102,7 @@
     },
     {
       "method": "mean",
-      "ms": 3921,
+      "ms": 3531,
       "psnr": 39.843,
       "ssim": 0.9164,
       "cropPsnr": 39.621,
@@ -109,7 +110,7 @@
     },
     {
       "method": "median",
-      "ms": 5184,
+      "ms": 4361,
       "psnr": 39.73,
       "ssim": 0.9144,
       "cropPsnr": 39.51,
@@ -117,7 +118,7 @@
     },
     {
       "method": "pairwise",
-      "ms": 6692,
+      "ms": 5847,
       "psnr": 39.819,
       "ssim": 0.9159,
       "cropPsnr": 39.594,

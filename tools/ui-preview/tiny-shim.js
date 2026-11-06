@@ -7,8 +7,10 @@ window.tiny = (() => {
   return {
     fileURL: (p) => '/file?p=' + encodeURIComponent(p),
     api: {
-      call: async (method) => {
+      call: async (method, params = {}) => {
         if (method === 'selftestConfig') return config && { quit: false, ...config };
+        if (method === 'listImages') return (await fetch('/list?paths=' + encodeURIComponent(JSON.stringify(params.paths)))).json();
+        if (method === 'readHead') return (await fetch('/head?p=' + encodeURIComponent(params.path))).text();
         if (method === 'saveBegin') return 1;
         if (method === 'saveEnd') return 0;
         return true;
@@ -16,7 +18,7 @@ window.tiny = (() => {
       on: () => () => {},
     },
     store: { set: async (k, v) => { store[k] = v; window.__store = store; }, get: async (k) => store[k] },
-    dialog: { openFiles: async () => null, saveFile: async () => null, alert: async () => {}, confirm: async () => false },
+    dialog: { openFiles: async () => null, pickFolder: async () => null, saveFile: async () => null, alert: async () => {}, confirm: async () => false },
     menu: { set: async () => {}, on: () => {} },
     win: { onDrop: () => {}, setFullscreen: () => {} },
     app: { shell: { open: (u) => window.open(u, '_blank'), reveal: () => {} } },

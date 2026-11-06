@@ -14,11 +14,19 @@
 <main>
   <section class="panel inputs">
     <div id="drop" class="drop">
-      <p><strong>Drop 2–8 photos of the same scene</strong></p>
-      <p class="muted">JPEG or PNG, all the same size</p>
-      <button id="pick">Choose photos…</button>
+      <p><strong>Drop photos or a folder</strong> <span class="muted">· 2–8 JPEG or PNG of one scene</span></p>
+      <div class="drop-buttons">
+        <button id="pick">Choose photos…</button>
+        <button id="pickFolder">Choose folder…</button>
+      </div>
     </div>
 
+    <div id="bursts" class="bursts" hidden>
+      <p id="burstsTitle"></p>
+      <ul id="burstList"></ul>
+    </div>
+
+    <p id="using" class="using"></p>
     <ul id="list"></ul>
 
     <label class="field">Merge method
@@ -28,53 +36,74 @@
         <option value="pairwise">Pairwise 50% blend (the guide's original)</option>
       </select>
     </label>
+    <label class="check"><input type="checkbox" id="compareMethods"> Also make the other method, to compare</label>
 
-    <button id="merge" class="primary" disabled>Merge</button>
+    <div class="buttons">
+      <button id="merge" class="primary" disabled>Merge</button>
+      <button id="cancel" hidden>Cancel</button>
+    </div>
+    <p id="estimate" class="muted small"></p>
     <div id="progress" class="progress" hidden><div></div></div>
-    <p id="status" class="status"></p>
+    <p id="status" class="status" aria-live="polite"></p>
     <p id="summary" class="summary"></p>
     <div id="warnings"></div>
 
-    <div class="note">
-      <p><strong>What to expect.</strong> The output is exactly twice the width and height of
-        your photos. Merging cuts noise and cleans up fine detail a little. It does not
-        give you four times the detail. In our tests (see README) the gain over
-        upscaling one photo was about 0.7–1.3&nbsp;dB PSNR.</p>
-      <p><strong>Needs a static scene</strong> and a tripod or a very steady hand. Small
-        shifts and slight rotation are corrected. Moving subjects, parallax and
-        camera shake blur are not.</p>
-    </div>
+    <details id="expect" class="note" open>
+      <summary>What to expect</summary>
+      <p>The output is exactly twice the width and height of your photos. Merging cuts
+        noise and cleans up fine detail a little. It does not give you four times the
+        detail. In our tests the gain over upscaling one photo was about 0.7–1.3&nbsp;dB PSNR.</p>
+      <p>The scene must hold still. Shifts, slight rotation and handheld wobble are
+        corrected; places where something moved are left out of the merge for that photo.
+        Camera-shake blur inside a photo is not fixed.</p>
+    </details>
   </section>
 
   <section class="panel result">
     <div id="empty" class="empty">
-      <p>Your merged image appears here, with a before/after view of any spot you click.</p>
+      <div class="howto">
+        <h2>How to shoot a burst</h2>
+        <ol>
+          <li><strong>Pick a still scene:</strong> a landscape, a building, a product on a table.</li>
+          <li><strong>Brace the camera.</strong> A tripod is best. Handheld works if you hold steady; the app corrects small movements.</li>
+          <li><strong>Lock the settings:</strong> manual exposure, the same ISO, shutter speed and focus for every frame.</li>
+          <li><strong>Shoot 4 to 8 frames</strong> in continuous mode. Tiny movements between frames are what add detail.</li>
+          <li><strong>Drop the photos here.</strong> The app picks the sharpest one as the reference.</li>
+        </ol>
+        <p class="muted small">More in chapter 7 of the <a href="#" data-url="https://dctmlab.taila665d5.ts.net/">Sony A6000/A6400 Hacking Guide</a>.</p>
+      </div>
     </div>
 
     <div id="view" hidden>
       <div class="toolbar">
         <span id="dims" class="dims"></span>
         <span class="spacer"></span>
+        <label id="compareWrap" hidden>Compare <select id="compareSel">
+          <option value="single">One photo vs merge</option>
+          <option value="methods">Mean vs Median</option>
+        </select></label>
+        <label>View <select id="layout"><option value="split">Split</option><option value="side">Side by side</option></select></label>
         <label>Zoom <select id="zoom"><option value="1">1:1</option><option value="2" selected>2×</option><option value="4">4×</option></select></label>
         <button id="saveJpg">Save JPEG…</button>
         <button id="savePng">Save PNG…</button>
       </div>
+      <div id="stale" class="stale" hidden>
+        <span id="staleText">Settings changed since this merge.</span>
+        <button id="remerge">Merge again</button>
+      </div>
       <p id="diff" class="muted small"></p>
 
       <div class="compare-wrap">
-        <div id="compare" class="compare">
+        <div id="compare" class="compare" tabindex="0" aria-label="Before and after comparison">
           <canvas id="before"></canvas>
           <canvas id="after"></canvas>
           <div id="handle" class="handle"></div>
-          <span class="tag left">Before: one photo, Lanczos 2×</span>
-          <span class="tag right">After: merged</span>
+          <span class="tag left" id="tagBefore">Before: one photo, Lanczos 2×</span>
+          <span class="tag right" id="tagAfter">After: merged</span>
+          <div class="nav" title="Click or drag to pick the spot to compare"><canvas id="overview"></canvas></div>
         </div>
         <input id="slider" type="range" min="0" max="100" value="50" aria-label="Before/after split">
-      </div>
-
-      <div class="overview-wrap">
-        <canvas id="overview" title="Click to pick the spot to compare"></canvas>
-        <p class="muted small">Click the overview to pick the spot to compare. Drag the slider to wipe between before and after.</p>
+        <p class="hint muted small">Drag on the small map to move. Hold <kbd>\</kbd> to see one photo, <kbd>Y</kbd> for side by side, <kbd>←</kbd> <kbd>→</kbd> to move the split.</p>
       </div>
     </div>
   </section>
@@ -87,6 +116,8 @@
 </footer>
 
 <script src="sr-core.js"></script>
+<script src="exif.js"></script>
+<script src="bursts.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

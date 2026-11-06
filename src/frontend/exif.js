@@ -75,13 +75,35 @@ function createExif() {
     return out;
   }
 
+  // DateTimeOriginal (or DateTime) from an APP1 payload, as seconds, or null.
+  function captureTime(payload) {
+    if (!payload || payload.length < 14) return null;
+    const p = payload, t = 6, le = p[t] === 0x49;
+    const u16 = (o) => (le ? p[o] | (p[o + 1] << 8) : (p[o] << 8) | p[o + 1]);
+    const u32 = (o) => (le ? (p[o] | (p[o + 1] << 8) | (p[o + 2] << 16) | (p[o + 3] << 24)) >>> 0
+      : ((p[o] << 24) | (p[o + 1] << 16) | (p[o + 2] << 8) | p[o + 3]) >>> 0);
+    const ascii = (e) => { const off = t + u32(e + 8); return String.fromCharCode(...p.slice(off, off + 19)); };
+    let found = null;
+    const walk = (ifd, fn) => {
+      const base = t + ifd;
+      if (base + 2 > p.length) return;
+      for (let i = 0, n = u16(base); i < n; i++) { const e = base + 2 + i * 12; if (e + 12 > p.length) return; fn(u16(e), e); }
+    };
+    walk(u32(t + 4), (tag, e) => {
+      if (tag === 0x0132 && !found) found = ascii(e);                         // DateTime
+      else if (tag === 0x8769) walk(u32(e + 8), (t2, e2) => { if (t2 === 0x9003) found = ascii(e2); });
+    });
+    const m = found && found.match(/^(\d{4}):(\d\d):(\d\d) (\d\d):(\d\d):(\d\d)/);
+    return m ? Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]) / 1000 : null;
+  }
+
   // Convenience: EXIF from `source` JPEG bytes into `target` JPEG bytes.
   function copyExif(source, target, size) {
     const app1 = extractApp1(source);
     return app1 ? insertApp1(target, patchApp1(app1, size)) : target;
   }
 
-  return { extractApp1, patchApp1, insertApp1, copyExif };
+  return { extractApp1, patchApp1, insertApp1, copyExif, captureTime };
 }
 
 if (typeof module === 'object' && module.exports) module.exports = createExif();

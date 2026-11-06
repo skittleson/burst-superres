@@ -223,6 +223,18 @@ test('verdict thresholds: good <= 0.3 px, soft <= 1 px, bad above', () => {
 test('defaultSelection keeps the reference and photos within 0.3 px', () => {
   const d = [{ err: 0.05 }, { err: 2 }, { err: 0.31 }, { err: 9 }];
   assert.deepEqual(SR.defaultSelection(d, 3), [true, false, false, true]);
+  // only the reference is good: fall back to photos within 1 px
+  assert.deepEqual(SR.defaultSelection([{ err: 0 }, { err: 0.6 }, { err: 3 }], 0), [true, true, false]);
+});
+
+test('merge with several modes in one pass matches separate merges', () => {
+  const G = waves(240, 180, 13);
+  const shifts = [[0, 0], [1.2, -0.4], [-0.6, 0.9], [0.3, 1.5]];
+  const frames = shifts.map(([x, y]) => synthFrame(G, x, y));
+  const warps = shifts.map(([x, y]) => SR.translation(-x / 2, -y / 2));
+  const both = SR.merge(frames, warps, { modes: ['mean', 'median'] });
+  assert.deepEqual(both.mean.data, SR.merge(frames, warps, { mode: 'mean' }).data);
+  assert.deepEqual(both.median.data, SR.merge(frames, warps, { mode: 'median' }).data);
 });
 
 test('merge rejects unknown modes', () => {

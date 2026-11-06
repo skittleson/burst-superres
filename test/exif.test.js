@@ -61,3 +61,14 @@ test('extractApp1 returns null for truncated input and non-JPEG bytes', () => {
   assert.equal(EXIF.extractApp1(full.slice(0, 20)), null);
   assert.equal(EXIF.extractApp1(Uint8Array.from([1, 2, 3])), null);
 });
+
+test('captureTime reads DateTimeOriginal from a real-shaped block', () => {
+  // IFD0 with ExifIFD -> DateTimeOriginal "2023:12:28 12:25:26"
+  const b = [0x45, 0x78, 0x69, 0x66, 0, 0, 0x49, 0x49, 42, 0, 8, 0, 0, 0];
+  const push16 = (v) => b.push(v & 255, v >> 8), push32 = (v) => b.push(v & 255, (v >> 8) & 255, (v >> 16) & 255, v >>> 24);
+  push16(1); push16(0x8769); push16(4); push32(1); push32(26); push32(0);              // IFD0 at 8, ExifIFD at 26
+  push16(1); push16(0x9003); push16(2); push32(20); push32(44); push32(0);             // ExifIFD, value at 44
+  b.push(...Buffer.from('2023:12:28 12:25:26\0'));
+  assert.equal(EXIF.captureTime(Uint8Array.from(b)), Date.UTC(2023, 11, 28, 12, 25, 26) / 1000);
+  assert.equal(EXIF.captureTime(null), null);
+});

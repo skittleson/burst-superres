@@ -1,5 +1,14 @@
 Merge a burst of photos of the same static scene into one image with twice the width and height. Free tool from the [Sony A6000/A6400 Hacking Guide](https://dctmlab.taila665d5.ts.net/).
 
+## New in 0.2.0
+
+- **Handheld bursts.** A local correction aligns each 64 px area when one shift and rotation is not enough. A real handheld pair went from 4.36 px to 0.06 px of alignment error. Tripod bursts are unchanged.
+- **Bad photos are left out for you.** Good / Soft / Too far off badges, automatic unticking above 0.3 px, and areas where something moved are left out of that photo.
+- **Folders.** Drop a folder; several bursts get a chooser.
+- **Compare like a photo editor.** Split or side by side, a small map to move around, Mean vs Median, hold `\` for the single photo, `Y`, arrow keys.
+- **Cancel** and a time estimate. **Merge again** reuses the aligned photos.
+- **EXIF** from the reference photo is kept in saved JPEGs.
+
 ## Download
 
 | Your computer | File |

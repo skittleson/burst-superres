@@ -431,8 +431,11 @@ function createSRCore() {
 
   // Which photos to merge by default: the reference and every photo that
   // lined up to `maxErr` or better (the rest would soften or ghost the result).
+  // When that leaves only the reference, photos up to 1 px ("soft") are used too.
   function defaultSelection(details, refIndex, maxErr = 0.3) {
-    return details.map((d, i) => i === refIndex || d.err <= maxErr);
+    const good = details.map((d, i) => i === refIndex || d.err <= maxErr);
+    if (good.filter(Boolean).length >= 2) return good;
+    return details.map((d, i) => i === refIndex || d.err <= 1);
   }
 
   function register(ref, frame, opts) {
@@ -621,56 +624,60 @@ function createSRCore() {
    *   median   per-pixel median (resists moving things / misalignment)
    *   pairwise guide ch. 7: 50/50 blend in pairs as 8-bit images, then repeat
    * opts: { mode = 'mean', scale = 2, refIndex = 0, stripRows = 32, onProgress }
+   * With opts.modes = ['mean', 'median', ...] every listed mode is made from
+   * the same rendered strips (one pass) and an object { mode: image } is
+   * returned instead of a single image.
    */
   function merge(frames, warps, opts = {}) {
-    const mode = opts.mode || 'mean';
-    if (!MODES.includes(mode)) throw new Error('Unknown merge mode: ' + mode);
+    const modes = opts.modes || [opts.mode || 'mean'];
+    for (const m of modes) if (!MODES.includes(m)) throw new Error('Unknown merge mode: ' + m);
     const scale = opts.scale || 2, refIndex = opts.refIndex || 0;
     const onProgress = opts.onProgress || (() => {});
     const { width: w, height: h } = frames[0];
     const W = w * scale, H = h * scale, N = frames.length;
     const stripRows = opts.stripRows || 32, line = W * 3;
-    const out = new Uint8ClampedArray(W * H * 4);
+    const outs = Object.fromEntries(modes.map((m) => [m, new Uint8ClampedArray(W * H * 4)]));
     const strips = frames.map(() => new Float32Array(stripRows * line));
     const valid = frames.map(() => new Uint8Array(stripRows * W));
-    const vals = new Float32Array(N);
+    const res = new Float32Array(stripRows * line), vals = new Float32Array(N);
 
     for (let Y0 = 0; Y0 < H; Y0 += stripRows) {
       const Y1 = Math.min(H, Y0 + stripRows), n = (Y1 - Y0) * W;
       onProgress(Y0 / H, 'Merging');
       for (let k = 0; k < N; k++) renderStrip(frames[k], warps[k], scale, 0, W, Y0, Y1, strips[k], valid[k]);
 
-      if (mode === 'pairwise') {
-        let level = strips.map((s) => { const q = new Float32Array(n * 3); for (let i = 0; i < n * 3; i++) q[i] = roundEven(clamp(s[i], 0, 255)); return q; });
-        while (level.length > 1) {
-          const next = [];
-          for (let i = 0; i + 1 < level.length; i += 2) {
-            const p = level[i], q = level[i + 1];
-            for (let j = 0; j < n * 3; j++) p[j] = roundEven(0.5 * p[j] + 0.5 * q[j]);
-            next.push(p);
+      for (const mode of modes) {
+        if (mode === 'pairwise') {
+          let level = strips.map((s) => { const q = new Float32Array(n * 3); for (let i = 0; i < n * 3; i++) q[i] = roundEven(clamp(s[i], 0, 255)); return q; });
+          while (level.length > 1) {
+            const next = [];
+            for (let i = 0; i + 1 < level.length; i += 2) {
+              const p = level[i], q = level[i + 1];
+              for (let j = 0; j < n * 3; j++) p[j] = roundEven(0.5 * p[j] + 0.5 * q[j]);
+              next.push(p);
+            }
+            if (level.length % 2) next.push(level[level.length - 1]);
+            level = next;
           }
-          if (level.length % 2) next.push(level[level.length - 1]);
-          level = next;
+          writeRGB(level[0], outs[mode], Y0 * W, n);
+          continue;
         }
-        writeRGB(level[0], out, Y0 * W, n);
-        continue;
-      }
-
-      // The reference always counts; other frames only where they cover the pixel.
-      const res = strips[refIndex];
-      for (let i = 0; i < n; i++) {
-        for (let ch = 0; ch < 3; ch++) {
-          const q = i * 3 + ch;
-          let m = 0;
-          for (let k = 0; k < N; k++) if (k === refIndex || valid[k][i]) vals[m++] = strips[k][q];
-          if (mode === 'mean') { let s = 0; for (let t = 0; t < m; t++) s += vals[t]; res[q] = s / m; }
-          else res[q] = median(vals, m);
+        // The reference always counts; other frames only where they cover the pixel.
+        for (let i = 0; i < n; i++) {
+          for (let ch = 0; ch < 3; ch++) {
+            const q = i * 3 + ch;
+            let m = 0;
+            for (let k = 0; k < N; k++) if (k === refIndex || valid[k][i]) vals[m++] = strips[k][q];
+            if (mode === 'mean') { let s = 0; for (let t = 0; t < m; t++) s += vals[t]; res[q] = s / m; }
+            else res[q] = median(vals, m);
+          }
         }
+        writeRGB(res, outs[mode], Y0 * W, n);
       }
-      writeRGB(res, out, Y0 * W, n);
     }
     onProgress(1, 'Merged');
-    return { width: W, height: H, data: out };
+    const images = Object.fromEntries(modes.map((m) => [m, { width: W, height: H, data: outs[m] }]));
+    return opts.modes ? images : images[modes[0]];
   }
 
   function median(a, m) {

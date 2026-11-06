@@ -2,15 +2,16 @@
 
 **Merge a burst of photos of the same scene into one image with twice the width and height.** A small, free desktop app for macOS, Windows and Linux, from the [Sony A6000/A6400 Hacking Guide](https://dctmlab.taila665d5.ts.net/) by [Do Code That Matters](https://docodethatmatters.com/).
 
-![Burst Super-Res merging a real 5-shot Sony A6000 burst, with the before/after slider](docs/media/app-real-burst.jpg)
+![Burst Super-Res merging a real 8-shot Sony A6000 burst, with the before/after slider](docs/media/app-real-burst.jpg)
 
-*A real 5-shot A6000 burst of a canyon. The app aligned the shots to 0.18 px, merged them to 12000 x 8000 px in 37 s, and shows "one photo upscaled" left of the slider and "merged" right of it.*
+*A real 8-shot A6000 burst of a canyon, dropped in as a folder. Every shot aligned to 0.22 px or better (5 of them with the handheld correction). Left of the slider: one photo upscaled 2x. Right: the mean of all 8.*
 
-- **Drop in 2 to 8 photos.** JPEG or PNG, straight from the camera.
-- **Sub-pixel alignment.** It corrects small shifts and slight rotation between shots, and it tells you how well the shots lined up.
+- **Drop in photos or a whole folder.** JPEG or PNG, straight from the camera. A folder with several bursts gets a chooser.
+- **Sub-pixel alignment, handheld too.** Shifts and slight rotation are corrected for the whole photo. When that is not enough (handheld parallax, lens distortion), a local correction aligns each 64 px area on its own.
+- **Bad photos are left out for you.** Each photo gets a badge: Good, Soft or Too far off. Photos that do not line up are unticked automatically; areas where something moved are left out of that photo.
 - **Exactly 2x per side.** Four 6000 x 4000 photos give one 12000 x 8000 image. The app shows real pixel dimensions, not a megapixel claim.
-- **Before/after slider.** Click any spot on the overview and wipe between one photo upscaled 2x and the merge, at 1:1, 2x or 4x zoom.
-- **Numbers, not adjectives.** Camera movement, alignment error, and how much the merge changed the picture.
+- **Compare like a photo editor.** Split slider or side by side, a small map to move around, Mean vs Median, and Lightroom-style keys.
+- **Keeps your EXIF.** Camera, lens, date and exposure from the reference photo go into the saved JPEG.
 - **Private and offline.** Your photos never leave your computer. No account, no upload, no nag screen.
 
 ## Download
@@ -28,21 +29,51 @@ The builds are not signed. On macOS, right-click the app and pick **Open** the f
 
 ## How to use it
 
-1. Take a burst of a still scene: a landscape, a building, a product on a table. Use a tripod, or brace the camera. Shoot 4 to 8 frames.
-2. Drop the photos into the window, or click **Choose photos...**.
-3. Click **Merge**. Read the alignment line: "good for merging" means every shot lined up to 0.3 px or better.
-4. Click a detailed spot on the overview, and drag the slider to compare.
+![The empty window with "How to shoot a burst"](docs/media/app-start.jpg)
+
+1. Shoot a burst of a still scene: 4 to 8 frames, the same settings for every frame. A tripod is best; a braced handheld burst works too.
+2. Drop the photos or the folder into the window, or click **Choose photos...** / **Choose folder...**.
+3. Click **Merge**. The app picks the sharpest photo as the reference, aligns the others, unticks any that do not line up, and merges.
+4. Drag on the small map to pick a spot. Drag the slider, or use the keys below.
 5. Click **Save JPEG...** or **Save PNG...**.
+
+| Key | Does |
+|---|---|
+| hold `\` | show the single photo (release to go back) |
+| `Y` | split view / side by side |
+| `←` `→` | move the split (`Shift` for small steps) |
+
+Changing the ticked photos or the method shows **Settings changed since this merge**. **Merge again** reuses the aligned photos, so it skips reading and aligning. **Cancel** stops a merge at any time.
 
 ## Examples
 
-### A real tripod-steady burst: it works
+### A real steady burst: it works
 
-The screenshot above. Five frames from a 13-shot burst (A6000, 20 mm, f/11, ISO 100). The camera moved up to 3.6 px between shots, and every shot aligned to 0.18 px or better. At 200% zoom, the merge has less noise and fewer JPEG block edges than one photo upscaled:
+The screenshot at the top. All 8 frames of a 13-shot burst (A6000, 20 mm, f/11, ISO 100). Version 0.1 could only use 5 of them; the handheld correction brought the other 3 from 0.33-0.62 px down to 0.05-0.22 px. At 200% zoom the merge has less noise and fewer JPEG block edges than one photo upscaled:
 
 ![One photo upscaled 2x next to 5 real photos merged](docs/media/before-after-real-burst.png)
 
-The app reports: "Difference from one photo upscaled 2x: 1.9 levels on average (of 255); 22% of pixels changed by more than 3 levels." A real burst has no "true" high-resolution image, so there is no PSNR for this example.
+A real burst has no "true" high-resolution image, so there is no PSNR for this example.
+
+### A handheld pair: now it works
+
+Two handheld shots. The camera moved 52 px and turned 0.11 degrees, and the near cactus and the far hills moved by different amounts (parallax). One shift-plus-rotation for the whole photo leaves 4.36 px of error and a doubled cactus. The local correction brings it to 0.06 px:
+
+![The same handheld pair merged with one shift and rotation, and with local alignment](docs/media/handheld-affine-vs-local.png)
+
+![The app showing the handheld pair side by side: one photo and the merge](docs/media/app-handheld-side-by-side.jpg)
+
+### A burst that moved too much: the app says so
+
+These two shots were taken 4 s apart, handheld; the camera moved about 370 px. The local correction gets to 0.33 px, which is "Soft", and part of the photo did not match at all (the lake surface moves). The app uses the photo because no better one exists, and says so:
+
+![The app warning that a soft photo is used and part of it was left out](docs/media/app-handheld-warning.jpg)
+
+### A folder with several bursts
+
+Drop a folder, and the app groups the photos into bursts by name (`..._122526.JPG`, `..._122526_2.JPG`) or, for camera names like `DSC01234.JPG`, by EXIF capture time (2 s or less apart). Pick one:
+
+![The burst chooser after dropping a folder](docs/media/app-burst-chooser.jpg)
 
 ### A simulated burst with a known answer: +1.07 dB
 
@@ -50,18 +81,15 @@ To measure the gain, I made a 4-shot burst from one real A6000 photo (sub-pixel 
 
 ![One photo upscaled 2x next to 4 simulated photos merged](docs/media/before-after-landscape.png)
 
-### A handheld burst: the app tells you it will not work
-
-These two shots were handheld. The camera moved 64 px and turned 0.11 degrees, and the near cactus and the far hills moved by different amounts (parallax). The app flags it: "Worst alignment error: 4.36 px (too much movement for a clean merge)". Right of the slider you can see the doubled cactus.
-
-![The app warning about a handheld burst, with a ghosted cactus in the merge](docs/media/app-handheld-warning.jpg)
-
 ## What the numbers in the app mean
 
-- **Camera moved up to X px between shots.** The largest movement of any photo corner compared to the reference photo. Some movement is good: the small sub-pixel offsets between shots are what add detail. If nothing moved, the app tells you that merging only reduces noise.
-- **Worst alignment error.** How far the measured movement in parts of the photo is from one shift-plus-rotation for the whole photo. Below 0.3 px is good for merging. Up to 1 px is usable but soft. Above 1 px gives ghosting.
-- **Difference from one photo upscaled 2x.** The mean luma difference between the merge and the sharpest photo upscaled 2x on its own, and the percentage of pixels that changed by more than 3 levels (of 255). It samples 96 rows, so it adds little time. A small number means the merge changed little. A large number with a bad alignment error means ghosting, not detail.
-- **Per photo:** "moved x, y px", "turned" (degrees) and "fit" (that photo's alignment error). The sharpest photo is the reference.
+- **Badges.** Each photo's alignment error after correction: **Good** is 0.3 px or less, **Soft** is up to 1 px, **Too far off** is more. Hover a badge for the numbers: how far the photo moved and turned, its alignment error, whether the handheld correction was used, and how much of it was left out.
+- **Merging N of M photos.** Photos above 0.3 px are unticked automatically. Tick them to use them anyway. If only the reference is Good, Soft photos are used and the app tells you.
+- **Camera moved up to X px between shots.** The largest movement of any corner or the centre, compared to the reference. Some movement is good: the small sub-pixel offsets between shots are what add detail. If nothing moved, the app tells you that merging only reduces noise.
+- **Worst alignment error.** The largest remaining error of any photo, after the shift, rotation and handheld correction.
+- **Part of a photo was left out.** Areas of 64 px where a photo still did not match (more than 1 px off, or a much larger brightness difference than elsewhere). The merge uses the other photos there. This is how moving leaves, water or people are kept from ghosting.
+- **Mean vs one photo upscaled 2x.** The mean luma difference between the merge and the sharpest photo upscaled 2x on its own, and the percentage of pixels that changed by more than 3 levels (of 255). It samples 96 rows, so it adds little time.
+- **Time estimate.** Before a merge, from your last merge on this computer. During a merge, from the progress so far.
 
 The output is exactly 2x per side, and the app shows the real pixel dimensions. It does not claim a megapixel number, because the extra pixels do not hold 4x the detail.
 
@@ -69,13 +97,13 @@ Everything runs on your computer. The app makes no network requests except when 
 
 ## What it does not do
 
-- **It needs a static scene.** Landscapes, architecture and product shots work. People, water, leaves in wind and traffic do not. The Median mode reduces ghosting from small moving things, but it does not remove it.
-- **It needs a tripod or a very steady hand.** The alignment model is one shift plus a slight rotation for the whole frame (affine). When the camera moves between shots, near and far objects move by different amounts (parallax). One model cannot align both. The app measures this and shows a warning when a photo does not fit (fit error above 0.3 px).
-- **It does not remove camera shake blur.** A blurry photo stays blurry. It adds blur to the merge.
+- **It needs a still scene.** Landscapes, architecture and product shots work. Areas where something moved are left out of that photo, so moving leaves or water do not ghost, but they do not gain detail either.
+- **Big handheld movements end up soft.** The correction works best when the camera moved a little. In my 4-second handheld pair (370 px of movement) the result was 0.33 px, "Soft".
+- **It does not remove camera shake blur.** A blurry photo stays blurry.
 - **It needs a small movement between shots.** If the photos are pixel-identical in position, merging only reduces noise. The app tells you when this happens.
 - **The gain is modest.** Expect less noise and cleaner fine edges. Do not expect 4x the detail. See the numbers below.
 - RAW files are not supported. Export JPEG or PNG first.
-- EXIF data is not copied to the output yet.
+- EXIF is copied to JPEG output only, not PNG.
 
 ## Measured results
 
@@ -119,13 +147,34 @@ What the numbers say:
 
 These are simulated bursts. A real camera adds demosaicing, an anti-aliasing filter and lens blur. I expect the gain on real tripod bursts to be the same or smaller. I did not measure it, because I do not have a tripod burst with a ground truth.
 
-### Handheld bursts in my samples
+### Handheld bursts and local alignment (v0.2)
 
-The two real bursts in `dslrCameraPowerRename` (`samples/` and `sample1/`) are handheld. Between shots the camera moved 52 px and 250 px. The affine fit error was 4.4 px and 21.9 px. I also tested a perspective (homography) fit on the same tile measurements: 0.6 px and 6.3 px RMS. Both are far above the sub-pixel accuracy that a merge needs. The cause is parallax between near bushes and far hills. The app merges these photos, but it shows the "did not line up cleanly" warning, and the result is soft. This is the measured reason for the "tripod or very steady hand" rule.
+Version 0.1 aligned each photo with one shift plus rotation (affine). On my two real handheld pairs that left 4.4 px and 21.9 px of error, from parallax between near bushes and far hills. A perspective fit was not enough either (0.6 px and 6.3 px). Version 0.2 adds a local correction: a grid of 64 px cells measured on top of the affine warp, smoothed, refined three times, then measured once more for the reported error.
+
+To measure it against a known answer, the benchmark's `--wobble 3` bends every simulated frame by a smooth displacement of up to 3 px (half that at frame resolution), different for each frame:
+
+| Run | Single photo 2x | Mean, affine only | Mean, with local alignment | Estimated error |
+|---|---|---|---|---|
+| a6000land-s5-wobble3 | 33.51 dB | 29.11 dB | **34.52 dB (+1.01)** | 0.06-0.08 px |
+| a6400-s5-wobble3 | 38.60 dB | 38.17 dB | **39.58 dB (+0.98)** | 0.07-0.09 px |
+
+The tripod-style runs are unchanged, because the local correction only runs when the affine fit is worse than 0.1 px (a6400-s2-noise2: 39.843 dB before and after; a6000land-s3-rot0.5: 34.551 dB before and after).
+
+On a synthetic test with a known displacement field, the true remaining error with 64 px cells was 0.031 px (1 px wobble), 0.086 px (3 px) and 0.171 px (6 px). With 128 px cells it was 0.14, 0.42 and 0.84 px.
+
+Real photos, as measured by the app:
+
+| Burst | Affine only | With local alignment | Badge |
+|---|---|---|---|
+| Handheld pair `20231228_122222` (moved 52 px) | 4.36 px | 0.06 px, 2% left out | Good |
+| Handheld pair `20230711_084242` (4 s apart, moved ~370 px) | 19.16 px | 0.33 px, 28% left out | Soft |
+| Steady burst `20231228_122526`, frames 1-3 | 0.33-0.62 px | 0.05-0.22 px | Good |
+
+Local alignment costs time: about 7 to 13 s per 24 MP photo that needs it (node, this machine).
 
 ### How I found the steady burst
 
-I found the real burst in my Immich library. I searched for bursts: 732 groups of 3 or more Sony shots taken 3 s or less apart with identical settings. I ran the app's alignment on the first 4 frames of 348 groups (ISO 400 or lower, 4 or more shots). 302 of them were handheld, with more than 10 px of alignment error. One burst was steady: `20231228_122526.JPG` to `_13`. At full resolution, frames `_4` to `_8` align to 0.18 px or better. Frames 1 to 3 moved up to 12.8 px and fit to 0.33 to 0.62 px, so I left them out.
+I found the real burst in my Immich library. I searched for bursts: 732 groups of 3 or more Sony shots taken 3 s or less apart with identical settings. I ran the app's alignment on the first 4 frames of 348 groups (ISO 400 or lower, 4 or more shots). 302 of them were handheld, with more than 10 px of alignment error. One burst was steady: `20231228_122526.JPG` to `_13`. With version 0.1, frames `_4` to `_8` aligned to 0.18 px or better and frames 1 to 3 (moved up to 12.8 px) only to 0.33 to 0.62 px. With version 0.2 all 8 align to 0.22 px or better.
 
 ### A method that did not help: shift-and-add
 
@@ -133,7 +182,7 @@ I also tried true shift-and-add: put every input pixel at its exact sub-pixel po
 
 ## How it works
 
-The code is in one file, `src/frontend/sr-core.js`, with no dependencies.
+The math is in `src/frontend/sr-core.js`, with no dependencies. `exif.js` copies EXIF, `bursts.js` groups a folder into bursts.
 
 **Registration.**
 1. Convert each photo to luma and build an image pyramid (2x2 box downsampling). The finest level gets a light Gaussian blur (sigma 1). This reduces aliasing and the bias that bilinear interpolation gives Lucas-Kanade towards whole pixels.
@@ -142,7 +191,9 @@ The code is in one file, `src/frontend/sr-core.js`, with no dependencies.
 4. Fit an affine warp through the tile vectors with least squares. Remove featureless tiles (sky) and tiles that disagree (moving objects).
 5. Repeat steps 3 and 4 twice more. Each time, pre-warp the frame tiles with the current fit, so the rotation inside a tile does not bias the shift. On a 1 degree test rotation this pass took the worst error from 0.040 px to 0.014 px.
 
-**Merge.** For each output strip, render every photo through its warp onto the 2x grid with Lanczos-3. The affine resampling uses two separable passes (Catmull-Smith), so it is exact for affine warps and costs 12 taps per pixel, not 36. Then take the per-pixel mean (or median) of the photos that cover the pixel.
+6. **Local correction (handheld).** If the affine fit is worse than 0.1 px, measure a grid of 64 px cells on top of the affine warp, without a coarse search. Fill featureless cells from their neighbours, median-filter the field, and add it. Repeat three times, then measure once more: that is the reported alignment error. Cells still more than 1 px off (or with a much larger brightness difference than the rest) are marked, and the merge leaves that photo out there.
+
+**Merge.** For each output strip, render every photo through its warp onto the 2x grid with Lanczos-3. With a local correction, each 128-pixel column block uses the affine warp that matches the field at its centre. The affine resampling uses two separable passes (Catmull-Smith), so it is exact for affine warps and costs 12 taps per pixel, not 36. Then take the per-pixel mean (or median) of the photos that cover the pixel. Mean and median can come from the same pass, for the comparison.
 
 **Why the guide's pairwise blend is an option, not the default.** The guide upscales two photos, aligns them, blends them 50/50, and repeats in pairs. For 4 photos that is a mean, with rounding to 8 bits after each stage. For 3 photos it weights them 25/25/50, which is worse. The mean does the same work with exact weights for any count. The pairwise mode stays in the app so you can compare against the original method. It rounds half to even, like OpenCV.
 
@@ -163,9 +214,10 @@ Measured in the app on this Linux machine (WebKitGTK 2.52):
 |---|---|---|---|
 | 4 x 3000 x 2000 | 6000 x 4000 | 6.9 s | 0.7 s |
 | 4 x 6000 x 4000 (24 MP) | 12000 x 8000 | 31.3 s | 2.5 s |
-| 2 x 6000 x 4000, real handheld pair | 12000 x 8000 | 18.6 s | 2.3 s |
-| 5 x 6000 x 4000, real steady burst | 12000 x 8000 | 36.9 s | not measured |
-| 8 x 6000 x 4000, real burst | 12000 x 8000 | 66.8 s | 29.0 s (PNG) |
+| 2 x 6000 x 4000, real handheld pair, v0.1 (affine only) | 12000 x 8000 | 18.6 s | 2.3 s |
+| 2 x 6000 x 4000, real handheld pair, v0.2 (local correction) | 12000 x 8000 | 31.4 s | 2.5 s |
+| 5 x 6000 x 4000, real steady burst, v0.1 | 12000 x 8000 | 36.9 s | not measured |
+| 8 x 6000 x 4000, real burst, v0.2 (5 local corrections) | 12000 x 8000 | 138.3 s | not measured |
 
 The app output and the node output agree to 50.6 dB PSNR. The difference is the JPEG quality 95 encoding of the saved file.
 
@@ -201,7 +253,7 @@ The app has a self-test that drives the real UI in the real webview. It is off u
 BURST_SELFTEST='{"photos":["/abs/a.jpg","/abs/b.jpg"],"mode":"mean","out":"/tmp/merged.jpg","focus":[2000,1500]}' tinyjs dev
 ```
 
-It adds the photos, merges, renders the compare view, saves, writes a report to the app store (`~/.local/share/com.docodethatmatters.burstsuperres/store.json` on Linux) and quits. Add `"fullscreen":true,"holdMs":8000,"quit":false` to keep the window up for a screenshot.
+It adds the photos, merges, renders the compare view, saves, writes a report to the app store (`~/.local/share/com.docodethatmatters.burstsuperres/store.json` on Linux) and quits. Other keys: `"drop":["/folder"]` with `"pickBurst":1` (folder drop and the burst chooser), `"compare":true` (Mean and Median), `"untick":[0]` (untick, check the stale banner, merge again), `"layout":"side"`, `"compareSel":"methods"`, `"stopAfterAdd":true`, and `"fullscreen":true,"holdMs":8000,"quit":false` to keep the window up for a screenshot.
 
 ## Platform status
 
@@ -213,17 +265,16 @@ It adds the photos, merges, renders the compare view, saves, writes a report to 
 | macOS 15+ (universal) | Built by GitHub Actions (`tinyjs publish --universal`). Ad-hoc signed, not notarized. **Not tested.** |
 | Windows 10/11 x64 | Built by GitHub Actions (`tinyjs.cmd publish`). Not code-signed. **Not tested.** Check the Blob-URL worker and saving in WebView2 first. |
 
-Releases come from `.github/workflows/release.yml`. Push a tag like `v0.1.0` to build every platform (plus Linux AppImages) and publish them with checksums.
+Releases come from `.github/workflows/release.yml`. Push a tag like `v0.2.0` to build every platform (plus Linux AppImages) and publish them with checksums.
 
 The code uses no platform-only APIs. `Uint8Array.prototype.toBase64` has a fallback for older webviews.
 
 ## What is left
 
 - Test on macOS and Windows.
-- Shoot a real tripod burst on an A6400. The real burst above is from the A6000.
-- Local (per-tile) alignment for handheld bursts with parallax. The tile measurements already exist; the merge would need a smooth warp field.
-- Copy EXIF from the reference photo to the output.
-- Speed: the merge is single-threaded JS. Several workers (one per strip range) or WebGL would make it faster.
+- Shoot a real tripod burst on an A6400. The real bursts above are from the A6000.
+- Speed: alignment and merge are single-threaded JS. Several workers (one per photo or strip range) or WebGL would make them faster; local correction is the slow part.
+- EXIF for PNG output, and RAW input.
 
 ## Credit
 
