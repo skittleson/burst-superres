@@ -156,12 +156,16 @@ function createSRCore() {
   }
 
   // Coarse-to-fine translation between two luma pyramids: F(x + p) ≈ R(x).
-  function registerPyramids(refPyr, framePyr) {
+  // `coarse: false` skips the integer search (the caller already pre-aligned).
+  function registerPyramids(refPyr, framePyr, { coarse = true } = {}) {
     const top = refPyr.length - 1;
     const R = refPyr[top];
-    const radius = Math.max(1, Math.min(8, Math.floor(Math.min(R.w, R.h) / 4)));
-    const c = coarseSearch(R, framePyr[top], radius);
-    let px = c.px, py = c.py, r = null;
+    let px = 0, py = 0, r = null;
+    if (coarse) {
+      const radius = Math.max(1, Math.min(8, Math.floor(Math.min(R.w, R.h) / 4)));
+      const c = coarseSearch(R, framePyr[top], radius);
+      px = c.px; py = c.py;
+    }
     for (let l = top; l >= 0; l--) {
       if (l !== top) { px *= 2; py *= 2; }
       r = lkTranslate(refPyr[l], framePyr[l], px, py);
@@ -281,8 +285,174 @@ function createSRCore() {
     return { warp, fitRms, inliers: inl.length, tiles };
   }
 
-  function register(ref, frame) {
-    return registerLuma(toLuma(ref), toLuma(frame));
+  // ---------- local alignment (handheld bursts) ----------
+  //
+  // After the global affine fit, a handheld burst still moves differently in
+  // different places: parallax between near and far objects, lens
+  // distortion, a little perspective. A grid of small cells measures what is
+  // left over, giving a smooth displacement field r(x) on top of the affine
+  // warp W: the frame point for reference point x is W(x + r(x)). Cells that
+  // still do not line up afterwards (moving subjects, parallax edges) are
+  // flagged so the merge leaves that frame out there.
+
+  const LOCAL_CELL = 64;         // cell size, input pixels
+  const LOCAL_TRIGGER = 0.1;     // only frames whose affine fit is worse than this
+  const CELL_BAD_PX = 1;         // a cell is "bad" above this remaining error
+  const LOCAL_PASSES = 3;        // estimate + refine passes before the final measurement
+
+  // Residual r at reference point (x, y): bilinear between cell centres.
+  function fieldAt(F, x, y) {
+    const gx = clamp((x - F.x0) / F.T, 0, F.nx - 1), gy = clamp((y - F.y0) / F.T, 0, F.ny - 1);
+    const i = Math.min(Math.floor(gx), F.nx - 2 < 0 ? 0 : F.nx - 2), j = Math.min(Math.floor(gy), F.ny - 2 < 0 ? 0 : F.ny - 2);
+    const fx = F.nx > 1 ? gx - i : 0, fy = F.ny > 1 ? gy - j : 0;
+    const i1 = Math.min(i + 1, F.nx - 1), j1 = Math.min(j + 1, F.ny - 1);
+    const k00 = j * F.nx + i, k10 = j * F.nx + i1, k01 = j1 * F.nx + i, k11 = j1 * F.nx + i1;
+    const w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy), w01 = (1 - fx) * fy, w11 = fx * fy;
+    return [w00 * F.dx[k00] + w10 * F.dx[k10] + w01 * F.dx[k01] + w11 * F.dx[k11],
+            w00 * F.dy[k00] + w10 * F.dy[k10] + w01 * F.dy[k01] + w11 * F.dy[k11]];
+  }
+
+  // Frame coordinates of reference point (x, y) through affine W plus field F.
+  function mapPoint(W, F, x, y) {
+    if (!F) return applyWarp(W, x, y);
+    const [rx, ry] = fieldAt(F, x, y);
+    return applyWarp(W, x + rx, y + ry);
+  }
+
+  // Affine that matches x ↦ W(x + r(x)) near (x, y) (finite differences over ±h).
+  function localAffineAt(W, F, x, y, h = 32) {
+    const [ux1, vx1] = mapPoint(W, F, x + h, y), [ux0, vx0] = mapPoint(W, F, x - h, y);
+    const [uy1, vy1] = mapPoint(W, F, x, y + h), [uy0, vy0] = mapPoint(W, F, x, y - h);
+    const a = (ux1 - ux0) / (2 * h), b = (uy1 - uy0) / (2 * h);
+    const d = (vx1 - vx0) / (2 * h), e = (vy1 - vy0) / (2 * h);
+    const [u, v] = mapPoint(W, F, x, y);
+    return { a, b, c: u - a * x - b * y, d, e, f: v - d * x - e * y };
+  }
+
+  // 3×3 median of one field component (robust to single bad cells).
+  function median3x3(src, nx, ny) {
+    const out = new Float32Array(src.length), win = new Float32Array(9);
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      let m = 0;
+      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+        const ii = i + di, jj = j + dj;
+        if (ii >= 0 && jj >= 0 && ii < nx && jj < ny) win[m++] = src[jj * nx + ii];
+      }
+      out[j * nx + i] = median(win, m);
+    }
+    return out;
+  }
+
+  /**
+   * Measure the residual field of `frameL` against `refL` on top of affine W.
+   * Returns null when there is too little texture to measure, else
+   * { field, err, badFraction } where err is the RMS remaining misalignment
+   * (input px) over the textured cells, measured after the field is applied.
+   */
+  function buildLocalField(refL, frameL, W, { cell = LOCAL_CELL, passes = LOCAL_PASSES } = {}) {
+    const { w, h } = refL, T = cell;
+    const nx = Math.floor(w / T), ny = Math.floor(h / T);
+    if (nx < 3 || ny < 3) return null;
+    const ox = Math.floor((w - nx * T) / 2), oy = Math.floor((h - ny * T) / 2);
+    const n = nx * ny;
+    const F = { T, nx, ny, x0: ox + (T - 1) / 2, y0: oy + (T - 1) / 2,
+      dx: new Float32Array(n), dy: new Float32Array(n), ok: new Uint8Array(n).fill(1) };
+    const refPyrs = [];
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      refPyrs.push(buildPyramid(cropLuma(refL, ox + i * T, oy + j * T, T, T), 24));
+    }
+    // One pass: measure each cell through the current mapping. The frame
+    // tile sampled reference point x at L(x), so the cell maps x ↦ L(x + p).
+    const measure = () => {
+      const cells = [];
+      for (let k = 0; k < n; k++) {
+        const i = k % nx, j = (k / nx) | 0, x0 = ox + i * T, y0 = oy + j * T;
+        const cx = F.x0 + i * T, cy = F.y0 + j * T;
+        const L = localAffineAt(W, F, cx, cy);
+        const r = registerPyramids(refPyrs[k], buildPyramid(warpCropLuma(frameL, L, x0, y0, T), 24), { coarse: false });
+        // the same displacement expressed as a change of r at the cell centre (L ≈ W(x + r) locally)
+        const det = W.a * W.e - W.b * W.d;
+        const [u0, v0] = applyWarp(L, cx, cy), [u1, v1] = applyWarp(L, cx + r.px, cy + r.py);
+        const du = u1 - u0, dv = v1 - v0;
+        cells.push({ qx: (W.e * du - W.b * dv) / det, qy: (-W.d * du + W.a * dv) / det, rms: r.rms, texture: r.texture });
+      }
+      return cells;
+    };
+    const textured = (cells) => {
+      const tex = cells.map((c) => c.texture).sort((a, b) => a - b);
+      const minTex = Math.max(0.5, 0.05 * tex[tex.length >> 1]);
+      return cells.map((c) => c.texture >= minTex && Number.isFinite(c.qx) && Math.hypot(c.qx, c.qy) < 24);
+    };
+
+    // Estimate and refine the field, then one more pass only measures.
+    for (let pass = 0; pass < passes; pass++) {
+      const cells = measure(), good = textured(cells);
+      if (good.filter(Boolean).length < Math.max(4, n * 0.1)) return null;
+      const qx = new Float32Array(n), qy = new Float32Array(n), have = Uint8Array.from(good);
+      cells.forEach((c, k) => { if (good[k]) { qx[k] = c.qx; qy[k] = c.qy; } });
+      // fill untextured cells from their measured neighbours, ring by ring
+      for (let left = n - have.reduce((s, v) => s + v, 0); left > 0;) {
+        const add = [];
+        for (let k = 0; k < n; k++) {
+          if (have[k]) continue;
+          const i = k % nx, j = (k / nx) | 0;
+          let sx = 0, sy = 0, c = 0;
+          for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) {
+            const ii = i + di, jj = j + dj, kk = jj * nx + ii;
+            if (ii >= 0 && jj >= 0 && ii < nx && jj < ny && have[kk]) { sx += qx[kk]; sy += qy[kk]; c++; }
+          }
+          if (c) add.push([k, sx / c, sy / c]);
+        }
+        if (!add.length) break;
+        for (const [k, x, y] of add) { qx[k] = x; qy[k] = y; have[k] = 1; }
+        left -= add.length;
+      }
+      const mx = median3x3(qx, nx, ny), my = median3x3(qy, nx, ny);
+      for (let k = 0; k < n; k++) { F.dx[k] += mx[k]; F.dy[k] += my[k]; }
+    }
+
+    const cells = measure(), good = textured(cells);
+    const rmsSorted = cells.filter((c, k) => good[k]).map((c) => c.rms).sort((a, b) => a - b);
+    const rmsMed = rmsSorted[rmsSorted.length >> 1] || 0;
+    let sse = 0, cnt = 0, bad = 0;
+    cells.forEach((c, k) => {
+      const e = Math.hypot(c.qx, c.qy);
+      const isBad = good[k] ? (e > CELL_BAD_PX || c.rms > Math.max(6, 2.5 * rmsMed)) : false;
+      if (isBad) { F.ok[k] = 0; bad++; }
+      if (good[k] && !isBad) { sse += e * e; cnt++; }
+    });
+    return { field: F, err: cnt ? Math.sqrt(sse / cnt) : Infinity, badFraction: bad / n };
+  }
+
+  // Alignment quality verdict from the remaining error (input px).
+  function verdictFor(err) {
+    return err <= 0.3 ? 'good' : err <= 1 ? 'soft' : 'bad';
+  }
+
+  // Which photos to merge by default: the reference and every photo that
+  // lined up to `maxErr` or better (the rest would soften or ghost the result).
+  function defaultSelection(details, refIndex, maxErr = 0.3) {
+    return details.map((d, i) => i === refIndex || d.err <= maxErr);
+  }
+
+  function register(ref, frame, opts) {
+    return finishRegistration(toLuma(ref), toLuma(frame), registerLuma(toLuma(ref), toLuma(frame)), opts);
+  }
+
+  // Adds local alignment when the affine fit is not good enough, and the verdict.
+  function finishRegistration(refL, frameL, r, { local = true, trigger = LOCAL_TRIGGER, cell, passes } = {}) {
+    r.err = r.inliers ? r.fitRms : 0;
+    r.mode = 'affine';
+    r.badFraction = 0;
+    if (local && r.inliers && r.fitRms > trigger) {
+      const lf = buildLocalField(refL, frameL, r.warp, { cell, passes });
+      if (lf && lf.err < r.fitRms) {
+        r.warp = { ...r.warp, field: lf.field };
+        r.err = lf.err; r.badFraction = lf.badFraction; r.mode = 'local';
+      }
+    }
+    r.verdict = verdictFor(r.err);
+    return r;
   }
 
   // Registers every frame against a reference: the sharpest one unless
@@ -297,9 +467,10 @@ function createSRCore() {
     const refL = toLuma(ref), refPyr = buildPyramid(refL);
     const results = frames.map((f, i) => {
       onProgress(0.2 + i / n * 0.8, `Aligning photo ${i + 1} of ${n}`);
-      if (i === refIndex) return { warp: { ...IDENTITY }, rms: 0, fitRms: 0, inliers: 0, tiles: [] };
+      if (i === refIndex) return { warp: { ...IDENTITY }, rms: 0, fitRms: 0, inliers: 0, tiles: [], err: 0, mode: 'reference', badFraction: 0, verdict: 'good' };
       if (f.width !== ref.width || f.height !== ref.height) throw new Error('All photos must have the same dimensions.');
-      return registerLuma(refL, toLuma(f), refPyr);
+      const fL = toLuma(f);
+      return finishRegistration(refL, fL, registerLuma(refL, fL, refPyr), opts);
     });
     onProgress(1, 'Aligned');
     return { refIndex, warps: results.map((r) => r.warp), details: results, sharpness: sharp };
@@ -391,13 +562,43 @@ function createSRCore() {
     return out;
   }
 
+  const CHUNK = 128;   // output columns per local-affine chunk
+
+  /**
+   * warpStrip for any warp: affine-only warps go straight through; a warp
+   * with a local field is rendered in CHUNK-wide column blocks, each through
+   * the affine that matches the field at the block centre (the field is smooth
+   * over a block, so the seams are far below a pixel). Pixels in cells the
+   * field flagged as misaligned get valid = 0.
+   */
+  function renderStrip(img, warp, scale, X0, outW, Y0, Y1, out, valid) {
+    const F = warp.field;
+    if (!F) return warpStrip(img, warp, scale, X0, outW, Y0, Y1, out, valid);
+    const rows = Y1 - Y0, yc = ((Y0 + Y1) / 2 + 0.5) / scale - 0.5;
+    const buf = new Float32Array(rows * CHUNK * 3), vbuf = valid ? new Uint8Array(rows * CHUNK) : null;
+    for (let c0 = 0; c0 < outW; c0 += CHUNK) {
+      const cw = Math.min(CHUNK, outW - c0), xc = (X0 + c0 + cw / 2 + 0.5) / scale - 0.5;
+      warpStrip(img, localAffineAt(warp, F, xc, yc), scale, X0 + c0, cw, Y0, Y1, buf, vbuf);
+      for (let r = 0; r < rows; r++) {
+        out.set(buf.subarray(r * cw * 3, (r + 1) * cw * 3), (r * outW + c0) * 3);
+        if (!valid) continue;
+        const y = (Y0 + r + 0.5) / scale - 0.5, j = clamp(Math.round((y - F.y0) / F.T), 0, F.ny - 1);
+        for (let x = 0; x < cw; x++) {
+          const i = clamp(Math.round(((X0 + c0 + x + 0.5) / scale - 0.5 - F.x0) / F.T), 0, F.nx - 1);
+          valid[r * outW + c0 + x] = F.ok[j * F.nx + i] ? vbuf[r * cw + x] : 0;
+        }
+      }
+    }
+    return out;
+  }
+
   // Resample a region of one frame through a warp (default identity). Returns RGBA.
   function resampleRegion(img, { scale = 2, warp = IDENTITY, x = 0, y = 0, width, height }) {
     const out = new Uint8ClampedArray(width * height * 4);
     const strip = 64, buf = new Float32Array(strip * width * 3);
     for (let Y0 = y; Y0 < y + height; Y0 += strip) {
       const Y1 = Math.min(y + height, Y0 + strip);
-      warpStrip(img, warp, scale, x, width, Y0, Y1, buf);
+      renderStrip(img, warp, scale, x, width, Y0, Y1, buf);
       writeRGB(buf, out, (Y0 - y) * width, (Y1 - Y0) * width);
     }
     return { width, height, data: out };
@@ -437,7 +638,7 @@ function createSRCore() {
     for (let Y0 = 0; Y0 < H; Y0 += stripRows) {
       const Y1 = Math.min(H, Y0 + stripRows), n = (Y1 - Y0) * W;
       onProgress(Y0 / H, 'Merging');
-      for (let k = 0; k < N; k++) warpStrip(frames[k], warps[k], scale, 0, W, Y0, Y1, strips[k], valid[k]);
+      for (let k = 0; k < N; k++) renderStrip(frames[k], warps[k], scale, 0, W, Y0, Y1, strips[k], valid[k]);
 
       if (mode === 'pairwise') {
         let level = strips.map((s) => { const q = new Float32Array(n * 3); for (let i = 0; i < n * 3; i++) q[i] = roundEven(clamp(s[i], 0, 255)); return q; });
@@ -570,7 +771,7 @@ function createSRCore() {
   }
 
   return {
-    MODES, IDENTITY, translation, applyWarp, toLuma, buildPyramid, sharpness,
+    MODES, IDENTITY, translation, applyWarp, mapPoint, verdictFor, defaultSelection, toLuma, buildPyramid, sharpness,
     register, registerBurst, lanczos3, resampleRegion, merge, compareToSingle, psnr, ssim, downsampleBox,
   };
 }

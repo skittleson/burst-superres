@@ -155,6 +155,76 @@ test('compareToSingle: zero for identical frames, non-zero once frames differ', 
   assert.ok(diff.meanAbs > 20 && diff.pctOver > 50, JSON.stringify(diff));
 });
 
+// ---- local alignment (handheld) ----
+
+// Smooth non-affine displacement D (px) and a field object that renders it.
+const wobbleD = (x, y, A) => [A * Math.sin(x / 190) * Math.cos(y / 230), A * Math.cos(x / 170 + 1) * Math.sin(y / 210)];
+function wobbleField(w, h, A, T = 16) {
+  const nx = Math.ceil(w / T) + 1, ny = Math.ceil(h / T) + 1, n = nx * ny;
+  const F = { T, nx, ny, x0: 0, y0: 0, dx: new Float32Array(n), dy: new Float32Array(n), ok: new Uint8Array(n).fill(1) };
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) [F.dx[j * nx + i], F.dy[j * nx + i]] = wobbleD(i * T, j * T, A);
+  return F;
+}
+// frame(y) = G(y + D(y)); the reference point x appears in the frame at y = x - D(y).
+const trueFramePoint = (x, y, A) => { let p = [x, y]; for (let k = 0; k < 10; k++) { const d = wobbleD(p[0], p[1], A); p = [x - d[0], y - d[1]]; } return p; };
+
+test('local alignment follows a non-affine wobble that one affine warp cannot', () => {
+  const G = waves(1200, 900, 21, 0.8), A = 3;
+  const frame = SR.resampleRegion(G, { scale: 1, warp: { ...SR.IDENTITY, field: wobbleField(1200, 900, A) }, width: 1200, height: 900 });
+  const local = SR.register(G, frame), affine = SR.register(G, frame, { local: false });
+  assert.equal(local.mode, 'local');
+  let sse = 0, n = 0;
+  for (let y = 100; y < 800; y += 50) for (let x = 100; x < 1100; x += 50) {
+    const [u, v] = SR.mapPoint(local.warp, local.warp.field, x, y), [tu, tv] = trueFramePoint(x, y, A);
+    sse += (u - tu) ** 2 + (v - tv) ** 2; n++;
+  }
+  assert.ok(Math.sqrt(sse / n) < 0.15, `true rms ${Math.sqrt(sse / n).toFixed(3)} px`);
+  assert.ok(local.err < affine.err, `estimated ${local.err} vs affine ${affine.err}`);
+  const pl = SR.psnr(SR.merge([G, frame], [SR.IDENTITY, local.warp], { scale: 1 }), G, 40);
+  const pa = SR.psnr(SR.merge([G, frame], [SR.IDENTITY, affine.warp], { scale: 1 }), G, 40);
+  assert.ok(pl > pa + 5, `local ${pl.toFixed(2)} dB vs affine ${pa.toFixed(2)} dB`);
+});
+
+test('a plain shifted frame keeps the exact affine path (no local field)', () => {
+  const G = waves(1600, 1200, 21, 0.8);
+  const r = SR.register(synthFrame(G, 0, 0), synthFrame(G, 1.3, -0.7, 0.2));
+  assert.equal(r.mode, 'affine');
+  assert.equal(r.warp.field, undefined);
+  assert.equal(r.verdict, 'good');
+});
+
+test('a field with constant displacement renders like the same translation', () => {
+  const img = waves(300, 200, 4), T = 16, nx = 21, ny = 15;
+  const F = { T, nx, ny, x0: 0, y0: 0, dx: new Float32Array(nx * ny).fill(2.25), dy: new Float32Array(nx * ny).fill(-1.5), ok: new Uint8Array(nx * ny).fill(1) };
+  const a = SR.resampleRegion(img, { scale: 2, warp: { ...SR.IDENTITY, field: F }, width: 600, height: 400 });
+  const b = SR.resampleRegion(img, { scale: 2, warp: SR.translation(2.25, -1.5), width: 600, height: 400 });
+  let maxDiff = 0;
+  for (let i = 0; i < a.data.length; i++) maxDiff = Math.max(maxDiff, Math.abs(a.data[i] - b.data[i]));
+  assert.ok(maxDiff <= 1, `maxDiff ${maxDiff}`);
+});
+
+test('cells where something moved are left out of the merge (deghosting)', () => {
+  const G = waves(1200, 900, 21, 0.8);
+  const frame = SR.resampleRegion(G, { scale: 1, warp: { ...SR.IDENTITY, field: wobbleField(1200, 900, 1) }, width: 1200, height: 900 });
+  const r = rng(5);
+  for (let y = 400; y < 560; y++) for (let x = 500; x < 660; x++) { const o = (y * 1200 + x) * 4; frame.data[o] = frame.data[o + 1] = frame.data[o + 2] = 255 * r(); }
+  const reg = SR.register(G, frame);
+  assert.equal(reg.mode, 'local');
+  assert.ok(reg.badFraction > 0, 'some cells flagged');
+  const m = SR.merge([G, frame], [SR.IDENTITY, reg.warp], { scale: 1 });
+  const patch = (img) => ({ width: 100, height: 100, data: (() => { const d = new Uint8ClampedArray(100 * 100 * 4); for (let y = 0; y < 100; y++) d.set(img.data.subarray(((430 + y) * 1200 + 530) * 4, ((430 + y) * 1200 + 630) * 4), y * 400); return d; })() });
+  assert.ok(SR.psnr(patch(m), patch(G)) > 35, `patch PSNR ${SR.psnr(patch(m), patch(G)).toFixed(1)} dB`);
+});
+
+test('verdict thresholds: good <= 0.3 px, soft <= 1 px, bad above', () => {
+  assert.deepEqual([0, 0.3, 0.31, 1, 1.01].map(SR.verdictFor), ['good', 'good', 'soft', 'soft', 'bad']);
+});
+
+test('defaultSelection keeps the reference and photos within 0.3 px', () => {
+  const d = [{ err: 0.05 }, { err: 2 }, { err: 0.31 }, { err: 9 }];
+  assert.deepEqual(SR.defaultSelection(d, 3), [true, false, false, true]);
+});
+
 test('merge rejects unknown modes', () => {
   const f = waves(8, 8);
   assert.throws(() => SR.merge([f], [SR.IDENTITY], { mode: 'ai' }), /Unknown merge mode/);

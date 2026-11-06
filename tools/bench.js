@@ -6,6 +6,9 @@
 //   node tools/bench.js --gt photo.jpg --seed 2 --crop x,y,w,h [--frames 4]  (--gt is required)
 //                       [--noise 2] [--quality 92] [--rot 0.5] [--out bench-out/name]
 // --rot gives each non-reference frame a random rotation of up to ±N degrees.
+// --wobble A bends each non-reference frame by a smooth non-affine displacement
+// of up to A ground-truth px (handheld parallax/distortion stand-in); it also
+// scores the merge with local alignment turned off, for comparison.
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -17,7 +20,7 @@ const gtPath = args.gt;
 if (!gtPath) { console.error('usage: node tools/bench.js --gt photo.jpg [--seed N] [--crop x,y,w,h] ...'); process.exit(2); }
 const seed = +(args.seed || 1), nFrames = +(args.frames || 4), noise = +(args.noise ?? 2), quality = +(args.quality || 92);
 const crop = (args.crop || '2900,1800,600,500').split(',').map(Number);
-const maxRot = +(args.rot || 0);
+const maxRot = +(args.rot || 0), wobble = +(args.wobble || 0);
 const outDir = args.out || path.join('bench-out', path.basename(gtPath, path.extname(gtPath)) + '-seed' + seed);
 fs.mkdirSync(outDir, { recursive: true });
 
@@ -70,10 +73,23 @@ function trueUV([sx, sy, deg], x, y) {
   const W = hrWarp(sx, sy, deg), det = W.a * W.e - W.b * W.d, X = 2 * x + 0.5 - W.c, Y = 2 * y + 0.5 - W.f;
   return [((W.e * X - W.b * Y) / det - 0.5) / 2, ((-W.d * X + W.a * Y) / det - 0.5) / 2];
 }
+// Smooth displacement (GT px) on a 32 px grid, different per frame.
+function wobbleField(k) {
+  const T = 32, nx = Math.ceil(G.width / T) + 1, ny = Math.ceil(G.height / T) + 1, n = nx * ny;
+  const F = { T, nx, ny, x0: 0, y0: 0, dx: new Float32Array(n), dy: new Float32Array(n), ok: new Uint8Array(n).fill(1) };
+  const p = [rand() * 6, rand() * 6, 300 + rand() * 300, 300 + rand() * 300];
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    F.dx[j * nx + i] = wobble * Math.sin(i * T / p[2] + p[0]) * Math.cos(j * T / p[3]);
+    F.dy[j * nx + i] = wobble * Math.cos(i * T / p[3]) * Math.sin(j * T / p[2] + p[1]);
+  }
+  return F;
+}
 const shifts = [[0, 0, 0]];
 for (let k = 1; k < nFrames; k++) shifts.push([(rand() * 2 - 1) * 3, (rand() * 2 - 1) * 3, (rand() * 2 - 1) * maxRot]); // ±3 GT px = ±1.5 input px
 const frames = shifts.map(([sx, sy, deg], k) => {
-  const sh = k ? SR.resampleRegion(G, { scale: 1, warp: hrWarp(sx, sy, deg), width: G.width, height: G.height }) : G;
+  const warp = hrWarp(sx, sy, deg);
+  if (k && wobble) warp.field = wobbleField(k);
+  const sh = k ? SR.resampleRegion(G, { scale: 1, warp, width: G.width, height: G.height }) : G;
   const lo = SR.downsampleBox(sh, 2);
   for (let i = 0; i < lo.data.length; i++) if ((i & 3) !== 3) lo.data[i] = lo.data[i] + noise * gauss();
   const enc = encode(lo, quality);
@@ -88,7 +104,7 @@ const reg = SR.registerBurst(frames, () => {}, { refIndex: 0 });
 const regMs = t() - t0;
 // worst error over a 5×5 grid of points spanning the frame, in input pixels
 const fw = frames[0].width, fh = frames[0].height;
-const regErr = reg.warps.map((W, k) => {
+const regErr = wobble ? reg.details.map((d) => d.err) : reg.warps.map((W, k) => {
   let m = 0;
   for (let j = 0; j < 5; j++) for (let i = 0; i < 5; i++) {
     const x = (fw - 1) * i / 4, y = (fh - 1) * j / 4, [u, v] = SR.applyWarp(W, x, y), [tu, tv] = trueUV(shifts[k], x, y);
@@ -96,7 +112,7 @@ const regErr = reg.warps.map((W, k) => {
   }
   return m;
 });
-console.log(`registration ${regMs.toFixed(0)} ms; max |error| per frame (input px): ${regErr.map((e) => e.toFixed(4)).join(', ')}`);
+console.log(`registration ${regMs.toFixed(0)} ms; ${wobble ? 'estimated' : 'max true'} |error| per frame (input px): ${regErr.map((e) => e.toFixed(4)).join(', ')}; modes ${reg.details.map((d) => d.mode).join(', ')}`);
 
 // ---- 4. merge + score
 const results = [];
@@ -116,9 +132,13 @@ savePng(cropImg(frames[0], crop.map((v) => v >> 1)), path.join(outDir, 'crop_inp
 
 t0 = t(); score('single-lanczos', SR.resampleRegion(frames[0], { scale: 2, width: G.width, height: G.height }), t() - t0);
 for (const mode of SR.MODES) { t0 = t(); const m = SR.merge(frames, reg.warps, { mode }); score(mode, m, t() - t0); }
+if (wobble) {
+  const affineOnly = SR.registerBurst(frames, () => {}, { refIndex: 0, local: false });
+  t0 = t(); score('mean-affine-only', SR.merge(frames, affineOnly.warps, { mode: 'mean' }), t() - t0);
+}
 
 fs.writeFileSync(path.join(outDir, 'results.json'), JSON.stringify({
   groundTruth: path.basename(gtPath), size: [G.width, G.height], seed, frames: nFrames, noise, quality, maxRot, crop,
-  shiftsAndRotations: shifts, estimated: reg.warps, fitRms: reg.details.map((d) => d.fitRms), inliers: reg.details.map((d) => d.inliers), registrationErrorPx: regErr, registrationMs: Math.round(regMs), results,
+  wobble, shiftsAndRotations: shifts, estimated: reg.warps, fitRms: reg.details.map((d) => d.fitRms), inliers: reg.details.map((d) => d.inliers), registrationErrorPx: regErr, registrationMs: Math.round(regMs), results,
 }, null, 2));
 console.log('wrote', outDir);
