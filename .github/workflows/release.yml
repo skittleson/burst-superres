@@ -32,7 +32,7 @@ jobs:
           # Linux: build on 22.04 so the binaries load on glibc 2.35+ distros.
           - { os: ubuntu-22.04, target: linux-x86_64 }
           - { os: ubuntu-22.04-arm, target: linux-arm64 }
-          - { os: macos-14, target: macos-universal, args: --universal }
+          - { os: macos-15, target: macos-universal, args: --universal }
           - { os: windows-latest, target: windows-x86_64 }
     runs-on: ${{ matrix.os }}
     steps:
