@@ -73,8 +73,7 @@ const full = RAW.demosaic(lin, info.width, info.height, info.cfa);
 const scene = { width: W, height: H, data: new Float32Array(W * H * 3) };
 if (args.scene) {
   // sRGB photo -> linear -> camera space (inverse of the file's matrix) -> raw units (inverse WB/levels), 85% of full scale
-  const { execFileSync } = require('child_process');
-  const ppm = execFileSync('djpeg', ['-pnm', args.scene], { maxBuffer: 1 << 30 }), m = ppm.subarray(0, 64).toString('latin1').match(/^P6\s+(\d+)\s+(\d+)\s+255\s/);
+  const ppm = require('child_process').execFileSync('djpeg', ['-pnm', args.scene], { maxBuffer: 1 << 30 }), m = ppm.subarray(0, 64).toString('latin1').match(/^P6\s+(\d+)\s+(\d+)\s+255\s/);
   const pw = +m[1], off = m[0].length;
   const M = info.colorMatrix, det = M[0] * (M[4] * M[8] - M[5] * M[7]) - M[1] * (M[3] * M[8] - M[5] * M[6]) + M[2] * (M[3] * M[7] - M[4] * M[6]);
   const Mi = [(M[4] * M[8] - M[5] * M[7]) / det, (M[2] * M[7] - M[1] * M[8]) / det, (M[1] * M[5] - M[2] * M[4]) / det,
@@ -97,6 +96,8 @@ const at = (x, y, c) => {
   return (1 - fy) * ((1 - fx) * d[o] + fx * d[o + 3]) + fy * ((1 - fx) * d[o + W * 3] + fx * d[o + W * 3 + 3]);
 };
 const fw = W / 2, fh = H / 2, cfa = info.cfa, range = info.white - info.black[0];
+const { execFileSync } = require('child_process');
+let previewExposure = null;
 const shifts = [[0, 0]];
 for (let k = 1; k < N; k++) shifts.push([(rand() * 2 - 1) * 3, (rand() * 2 - 1) * 3]);
 
@@ -120,10 +121,18 @@ for (let k = 0; k < N; k++) {
     vals[y * fw + x] = Math.min(16383, Math.max(0, Math.round(v + info.black[(y & 1) * 2 + (x & 1)])));
   }
   const strip = encodeSonyARW2(vals, fw, fh, info.toneCurve);
-  const file = new Uint8Array(src.length + strip.length);
-  file.set(src); file.set(strip, src.length);
+  // new embedded preview (like the camera's): this frame rendered, 1/2 size, JPEG
+  const tmpInfo = { ...info, rawWidth: fw, rawHeight: fh, width: fw, height: fh };
+  const pv = RAW.render(vals, tmpInfo, { exposure: previewExposure ?? (previewExposure = RAW.autoExposure(vals, tmpInfo, 110)) });
+  const half = SR.resampleRegion(pv, { scale: 0.5, width: fw >> 1, height: fh >> 1 });
+  const head = Buffer.from(`P6\n${half.width} ${half.height}\n255\n`), rgb = Buffer.alloc(half.width * half.height * 3);
+  for (let i = 0, j = 0; j < rgb.length; i += 4, j += 3) { rgb[j] = half.data[i]; rgb[j + 1] = half.data[i + 1]; rgb[j + 2] = half.data[i + 2]; }
+  const jpg = execFileSync('cjpeg', ['-quality', '85'], { input: Buffer.concat([head, rgb]), maxBuffer: 1 << 30 });
+  const file = new Uint8Array(src.length + strip.length + jpg.length);
+  file.set(src); file.set(strip, src.length); file.set(jpg, src.length + strip.length);
   setVal(file, sub.get(0x0100), fw); setVal(file, sub.get(0x0101), fh);
   setVal(file, sub.get(0x0111), src.length); setVal(file, sub.get(0x0117), strip.length);
+  setVal(file, ifd0.get(0x0201), src.length + strip.length); setVal(file, ifd0.get(0x0202), jpg.length);
   const name = path.join(outDir, `SYN_burst${k ? '_' + (k + 1) : ''}.ARW`);
   fs.writeFileSync(name, file);
   console.log(name, `shift ${sx.toFixed(3)}, ${sy.toFixed(3)} scene px`);

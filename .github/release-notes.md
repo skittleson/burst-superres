@@ -1,5 +1,12 @@
 Merge a burst of photos of the same static scene into one image with twice the width and height. Free tool from the [Sony A6000/A6400 Hacking Guide](https://dctmlab.taila665d5.ts.net/).
 
+## New in 0.3.0
+
+- **Sony RAW (ARW).** Decoded in the app (checked against LibRaw on a real A6000 file). With 6 or more RAW photos the merge is built from the raw sensor samples of every photo. In simulations, RAW scored 0.9 to 2.5 dB better than the same burst as camera JPEGs. Only one real ARW was available for testing, so these RAW numbers are from simulated bursts.
+- **Sharpen after merging** (deconvolution): Off by default for camera JPEGs, Auto for RAW. Gentle, Medium and Strong are there to try.
+- **Brightness matching.** Exposure flicker between shots is evened out per photo and colour.
+- EXIF is kept for RAW input too.
+
 ## New in 0.2.0
 
 - **Handheld bursts.** A local correction aligns each 64 px area when one shift and rotation is not enough. A real handheld pair went from 4.36 px to 0.06 px of alignment error. Tripod bursts are unchanged.

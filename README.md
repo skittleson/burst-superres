@@ -6,12 +6,15 @@
 
 *A real 8-shot A6000 burst of a canyon, dropped in as a folder. Every shot aligned to 0.22 px or better (5 of them with the handheld correction). Left of the slider: one photo upscaled 2x. Right: the mean of all 8.*
 
-- **Drop in photos or a whole folder.** JPEG or PNG, straight from the camera. A folder with several bursts gets a chooser.
+- **Drop in photos or a whole folder.** JPEG, PNG or Sony ARW (RAW), straight from the camera. A folder with several bursts gets a chooser.
+- **RAW merges from the sensor itself.** With 6 or more ARW files, every output pixel is built from the raw sensor samples of all photos, with no demosaicing in between. In simulations that scored 0.9 to 2.5 dB better than merging the same burst as camera JPEGs.
 - **Sub-pixel alignment, handheld too.** Shifts and slight rotation are corrected for the whole photo. When that is not enough (handheld parallax, lens distortion), a local correction aligns each 64 px area on its own.
 - **Bad photos are left out for you.** Each photo gets a badge: Good, Soft or Too far off. Photos that do not line up are unticked automatically; areas where something moved are left out of that photo.
 - **Exactly 2x per side.** Four 6000 x 4000 photos give one 12000 x 8000 image. The app shows real pixel dimensions, not a megapixel claim.
 - **Compare like a photo editor.** Split slider or side by side, a small map to move around, Mean vs Median, and Lightroom-style keys.
-- **Keeps your EXIF.** Camera, lens, date and exposure from the reference photo go into the saved JPEG.
+- **Keeps your EXIF.** Camera, lens, date and exposure from the reference photo go into the saved JPEG, for JPEG and RAW input.
+- **Optional sharpening after the merge.** A gentle deconvolution, off for camera JPEGs and automatic for RAW (it picks the amount that best predicts a photo left out of the merge).
+- **Brightness matching.** Exposure flicker between shots is measured per photo and colour and evened out before merging.
 - **Private and offline.** Your photos never leave your computer. No account, no upload, no nag screen.
 
 ## Download
@@ -102,7 +105,9 @@ Everything runs on your computer. The app makes no network requests except when 
 - **It does not remove camera shake blur.** A blurry photo stays blurry.
 - **It needs a small movement between shots.** If the photos are pixel-identical in position, merging only reduces noise. The app tells you when this happens.
 - **The gain is modest.** Expect less noise and cleaner fine edges. Do not expect 4x the detail. See the numbers below.
-- RAW files are not supported. Export JPEG or PNG first.
+- **RAW: Sony ARW only**, compressed or uncompressed (ARW 2.x). Sony's newer lossless-compressed ARW is not supported. Decoding is checked against LibRaw on one real ILCE-6000 file; I had no A6400 ARW to test. No real RAW *burst* was available, so RAW quality numbers are from simulated bursts (see below).
+- **RAW colour is a neutral render**, not Sony's look: camera white balance, Sony's colour matrix from the file, sRGB, a soft highlight shoulder, and an exposure matched to the camera's preview.
+- **Sharpening can hurt.** On in-camera-sharpened JPEGs, Auto measured 0.1 to 0.9 dB worse in simulation, which is why it is off by default for JPEG.
 - EXIF is copied to JPEG output only, not PNG.
 
 ## Measured results
@@ -172,6 +177,70 @@ Real photos, as measured by the app:
 
 Local alignment costs time: about 7 to 13 s per 24 MP photo that needs it (node, this machine).
 
+### Brightness matching, sharpening and RAW (v0.3)
+
+**Brightness matching.** Each photo gets a per-colour gain: the median, over 32 px blocks, of reference brightness / photo brightness, measured through the alignment (blocks near black or white, and areas the local correction rejected, are skipped). With `--gain 0.05` (each frame randomly ±5% brighter or darker):
+
+| Run | Estimated gains vs true | Mean, no matching | Mean, matched |
+|---|---|---|---|
+| a6400-s6-gain5 | 0.9862 vs 0.9856, 0.9998 vs 1.0004, 1.0491 vs 1.0498 | 39.04 dB | **39.87 dB** |
+| a6000land-s6-gain5 | 1.0470 vs 1.0471, 0.9863 vs 0.9866, 0.9649 vs 0.9651 | 34.54 dB | 34.55 dB |
+
+Gains are found to within 0.001. Without flicker it changes nothing (a6400-s2-noise2: 39.843 dB, a6000land-s2-noise2: 34.577 dB, both as before). On the real 8-shot canyon burst the measured gains were 0.992 to 1.003.
+
+**Sharpening (deconvolution).** After the merge, Richardson-Lucy with a 3-tap blur model ([1/4 1/2 1/4] per axis), 6 rounds, blended per pixel by local detail so flat areas keep the merged value. In strips, so memory stays small. How much it helps depends entirely on how the photos were blurred:
+
+| Simulated burst (4 frames) | Mean | Amount 0.5 | Amount 1 | Auto picked |
+|---|---|---|---|---|
+| A6000 landscape, sensor box only | 34.58 | **35.60** | 35.56 | 0.25 (35.19) |
+| A6000 landscape, + lens blur 0.7 px | 32.34 | 33.26 | **34.02** | 0.25 (32.80) |
+| A6000 landscape, point sampling (narrower than the model) | **30.96** | 30.38 | 29.36 | 0.25 (30.74) |
+| A6400 photo, sensor box only | 39.84 | **39.91** | 39.85 | 0 (39.84) |
+| One photo alone, landscape | 33.51 | 33.56 | 32.72 | |
+
+- It needs the burst: on one photo alone it gains nothing or loses.
+- "Auto" (hold-out: leave out the best-aligned photo, deblur the merge of the rest, check which amount predicts the left-out photo best) is conservative. It never picked a harmful amount except in the point-sampling case (-0.22 dB), which is narrower than any real sensor.
+- **Camera JPEGs are a problem for Auto.** They are sharpened in camera, so the left-out photo rewards copying that sharpening. In the RAW simulation below, Auto on sharpened JPEGs cost up to 0.9 dB (and 0.12 dB in the in-app test). So JPEG input defaults to Off. On the real canyon JPEG burst Auto picked Strong; I cannot score that without a ground truth, so it stays your choice:
+
+![The real canyon burst merged, without and with Strong sharpening](docs/media/sharpen-real-canyon.png)
+
+**RAW (Sony ARW).** The decoder reads Sony's 8-bit-per-pixel block code (11-bit values with 7-bit deltas, then Sony's tone curve) and decrypts the SR2 block for white balance, black and white levels and Sony's colour matrix. On a real ILCE-6000 ARW it matches LibRaw 0.21 on all 24,240,576 visible samples (`test/raw.test.js`, run with `ARW_SAMPLE=` pointing at an ARW). The render uses the Malvar-He-Cutler demosaic; against LibRaw's own AHD render of the same file it scores 36.9 dB.
+
+With 6 or more RAW photos the mean is built straight from the sensor samples: every output pixel gathers, per colour, the raw samples near its position in every photo (Gaussian weight, sigma 0.22 input px, on the true sub-pixel distance), the way Wronski et al. (2019) do it, with an isotropic kernel. With fewer photos, each RAW photo is demosaiced first and merged like a JPEG. Alignment always runs on demosaiced renders.
+
+`tools/bench-raw.js` simulates the sensor so there is a ground truth: a real photo, shifted, averaged over 2x2, put through an RGGB mosaic with shot and read noise. "JPEG" is what a camera would ship from the same mosaic: demosaic, sharpening (amount 0.6), JPEG quality 92. PSNR in dB, crop of 3000 x 2000 output px:
+
+| Run | Frames | One JPEG 2x | JPEG mean | RAW: demosaic, then mean (+ auto sharpening) | RAW: from sensor samples | Best RAW vs JPEG mean |
+|---|---|---|---|---|---|---|
+| land-s3-2f | 2 | 29.46 | 30.55 | **32.03** | 31.29 | +1.48 |
+| land-s3-4f | 4 | 29.46 | 31.09 | **32.36** | 32.07 | +1.27 |
+| land-s3-5f | 5 | 29.46 | 31.12 | **32.91** | 32.30 | +1.79 |
+| land-s5-5f | 5 | 29.46 | 31.13 | 32.68 | **33.16** | +2.03 |
+| land-s3-6f | 6 | 29.46 | 31.23 | 33.02 | **33.09** | +1.86 |
+| land-s5-6f | 6 | 29.45 | 31.25 | 33.03 | **33.72** | +2.48 |
+| land-s3-8f | 8 | 29.46 | 31.30 | 33.08 | **33.31** | +2.01 |
+| land-s3-8f-iso3 (3x noise) | 8 | 27.40 | 30.86 | 32.41 | **32.52** | +1.66 |
+| a6400-s3-4f | 4 | 35.91 | 38.77 | **40.16** | 40.16 | +1.40 |
+| a6400-s3-5f | 5 | 35.90 | 39.02 | 40.28 | **40.40** | +1.38 |
+| a6400-s3-8f | 8 | 35.90 | 39.48 | 40.54 | **41.29** | +1.81 |
+
+The sensor-sample merge loses or ties with 2 to 4 photos and wins from 6 (5 is mixed), so the app switches at 6. The raw results are in `docs/results/raw/`.
+
+**RAW end to end in the app.** `tools/arw-encode.js` writes real ARW files: Sony's compression (its decoder round trip on a real file differs on 20 of 387,072 samples, by up to 8 levels), the real file's metadata, and a new embedded preview. I built a 6-photo burst from a real JPEG scene, ran it through the app (`tinyjs dev`, drop the folder, merge, save PNG) and scored it with `tools/score-raw.js`. The "JPEG" burst is the app's own render of the same ARWs, sharpened 0.6, JPEG q92:
+
+| Input (same 6-photo burst) | In the app | PSNR vs scene |
+|---|---|---|
+| One RAW photo, demosaiced, 2x | | 32.23 dB |
+| 6 JPEGs, mean | 5.6 s | 32.45 dB |
+| 4 RAWs, demosaic then mean | 5.8 s | 32.62 dB |
+| 6 RAWs, from sensor samples | 9.4 s | **33.38 dB** |
+
+![6 camera-style JPEGs merged next to the same 6 RAW files merged from sensor samples](docs/media/raw-vs-jpeg.png)
+
+The burst was 2048 x 1344 per photo. With 4 copies of the real 24 MP ARW, the app took 65.5 s for a 12048 x 8048 merge and wrote all of this EXIF into the JPEG: Sony, ILCE-6000, the capture date, 1/60 s, f/3.5, ISO 3200, the lens, the output size, and "Burst Super-Res 0.3.0".
+
+![The app merging a 6-photo RAW burst](docs/media/app-raw-burst.jpg)
+
 ### How I found the steady burst
 
 I found the real burst in my Immich library. I searched for bursts: 732 groups of 3 or more Sony shots taken 3 s or less apart with identical settings. I ran the app's alignment on the first 4 frames of 348 groups (ISO 400 or lower, 4 or more shots). 302 of them were handheld, with more than 10 px of alignment error. One burst was steady: `20231228_122526.JPG` to `_13`. With version 0.1, frames `_4` to `_8` aligned to 0.18 px or better and frames 1 to 3 (moved up to 12.8 px) only to 0.33 to 0.62 px. With version 0.2 all 8 align to 0.22 px or better.
@@ -182,7 +251,7 @@ I also tried true shift-and-add: put every input pixel at its exact sub-pixel po
 
 ## How it works
 
-The math is in `src/frontend/sr-core.js`, with no dependencies. `exif.js` copies EXIF, `bursts.js` groups a folder into bursts.
+The math is in `src/frontend/sr-core.js`, with no dependencies. `raw.js` decodes and renders Sony ARW, `exif.js` reads and writes EXIF, `bursts.js` groups a folder into bursts.
 
 **Registration.**
 1. Convert each photo to luma and build an image pyramid (2x2 box downsampling). The finest level gets a light Gaussian blur (sigma 1). This reduces aliasing and the bias that bilinear interpolation gives Lucas-Kanade towards whole pixels.
@@ -196,6 +265,8 @@ The math is in `src/frontend/sr-core.js`, with no dependencies. `exif.js` copies
 **Merge.** For each output strip, render every photo through its warp onto the 2x grid with Lanczos-3. With a local correction, each 128-pixel column block uses the affine warp that matches the field at its centre. The affine resampling uses two separable passes (Catmull-Smith), so it is exact for affine warps and costs 12 taps per pixel, not 36. Then take the per-pixel mean (or median) of the photos that cover the pixel. Mean and median can come from the same pass, for the comparison.
 
 **Why the guide's pairwise blend is an option, not the default.** The guide upscales two photos, aligns them, blends them 50/50, and repeats in pairs. For 4 photos that is a mean, with rounding to 8 bits after each stage. For 3 photos it weights them 25/25/50, which is worse. The mean does the same work with exact weights for any count. The pairwise mode stays in the app so you can compare against the original method. It rounds half to even, like OpenCV.
+
+**Brightness, sharpening, RAW.** See [Brightness matching, sharpening and RAW](#brightness-matching-sharpening-and-raw-v03) above.
 
 **Reference frame.** The sharpest photo (highest variance of the Laplacian) is the reference, as in `image_utils.py`.
 
@@ -265,16 +336,18 @@ It adds the photos, merges, renders the compare view, saves, writes a report to 
 | macOS 15+ (universal) | Built by GitHub Actions (`tinyjs publish --universal`). Ad-hoc signed, not notarized. **Not tested.** |
 | Windows 10/11 x64 | Built by GitHub Actions (`tinyjs.cmd publish`). Not code-signed. **Not tested.** Check the Blob-URL worker and saving in WebView2 first. |
 
-Releases come from `.github/workflows/release.yml`. Push a tag like `v0.2.0` to build every platform (plus Linux AppImages) and publish them with checksums.
+Releases come from `.github/workflows/release.yml`. Push a tag like `v0.3.0` to build every platform (plus Linux AppImages) and publish them with checksums.
 
 The code uses no platform-only APIs. `Uint8Array.prototype.toBase64` has a fallback for older webviews.
 
 ## What is left
 
 - Test on macOS and Windows.
-- Shoot a real tripod burst on an A6400. The real bursts above are from the A6000.
+- Shoot a real tripod burst on an A6400, in RAW. The real bursts above are A6000 JPEGs, and the only real ARW I had was one A6000 photo.
+- Test an A6400 ARW, and add Sony's lossless-compressed ARW.
 - Speed: alignment and merge are single-threaded JS. Several workers (one per photo or strip range) or WebGL would make them faster; local correction is the slow part.
-- EXIF for PNG output, and RAW input.
+- EXIF for PNG output.
+- Detail-aware (edge-stretched) kernels for the sensor-sample merge, as in Wronski et al.; this version uses round ones.
 
 ## Credit
 
