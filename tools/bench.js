@@ -6,6 +6,11 @@
 //   node tools/bench.js --gt photo.jpg --seed 2 --crop x,y,w,h [--frames 4]  (--gt is required)
 //                       [--noise 2] [--quality 92] [--rot 0.5] [--out bench-out/name]
 // --rot gives each non-reference frame a random rotation of up to ±N degrees.
+// --lens S blurs every frame with a Gaussian of S ground-truth px before the
+// 2x2 sensor box (lens blur). --sample point decimates instead of box-averaging
+// (a narrower blur than the deblur model assumes).
+// --gain G scales each non-reference frame's brightness by a random 1 ± G
+// (exposure flicker) and also scores the merge without brightness matching.
 // --wobble A bends each non-reference frame by a smooth non-affine displacement
 // of up to A ground-truth px (handheld parallax/distortion stand-in); it also
 // scores the merge with local alignment turned off, for comparison.
@@ -20,7 +25,8 @@ const gtPath = args.gt;
 if (!gtPath) { console.error('usage: node tools/bench.js --gt photo.jpg [--seed N] [--crop x,y,w,h] ...'); process.exit(2); }
 const seed = +(args.seed || 1), nFrames = +(args.frames || 4), noise = +(args.noise ?? 2), quality = +(args.quality || 92);
 const crop = (args.crop || '2900,1800,600,500').split(',').map(Number);
-const maxRot = +(args.rot || 0), wobble = +(args.wobble || 0);
+const lensSigma = +(args.lens || 0), pointSample = args.sample === 'point';
+const maxRot = +(args.rot || 0), wobble = +(args.wobble || 0), gainVar = +(args.gain || 0);
 const outDir = args.out || path.join('bench-out', path.basename(gtPath, path.extname(gtPath)) + '-seed' + seed);
 fs.mkdirSync(outDir, { recursive: true });
 
@@ -48,6 +54,25 @@ function encode(img, q) {
 function cropImg(img, [x, y, w, h]) {
   const out = new Uint8ClampedArray(w * h * 4);
   for (let r = 0; r < h; r++) out.set(img.data.subarray(((y + r) * img.width + x) * 4, ((y + r) * img.width + x + w) * 4), r * w * 4);
+  return { width: w, height: h, data: out };
+}
+
+function gaussBlurRGBA(img, sigma) {
+  const { width: w, height: h } = img, r = Math.ceil(3 * sigma), k = [];
+  let s = 0; for (let i = -r; i <= r; i++) { k.push(Math.exp(-i * i / (2 * sigma * sigma))); s += k[k.length - 1]; }
+  for (let i = 0; i < k.length; i++) k[i] /= s;
+  const out = new Uint8ClampedArray(img.data.length), tmp = new Float32Array(w * h);
+  for (let c = 0; c < 3; c++) {
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { let v = 0; for (let t = -r; t <= r; t++) v += k[t + r] * img.data[(y * w + Math.min(w - 1, Math.max(0, x + t))) * 4 + c]; tmp[y * w + x] = v; }
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { let v = 0; for (let t = -r; t <= r; t++) v += k[t + r] * tmp[Math.min(h - 1, Math.max(0, y + t)) * w + x]; out[(y * w + x) * 4 + c] = v; }
+  }
+  for (let i = 3; i < out.length; i += 4) out[i] = 255;
+  return { width: w, height: h, data: out };
+}
+
+function decimate(img) {
+  const w = img.width >> 1, h = img.height >> 1, out = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) out.set(img.data.subarray(((2 * y) * img.width + 2 * x) * 4, ((2 * y) * img.width + 2 * x) * 4 + 4), (y * w + x) * 4);
   return { width: w, height: h, data: out };
 }
 
@@ -84,13 +109,17 @@ function wobbleField(k) {
   }
   return F;
 }
-const shifts = [[0, 0, 0]];
+const shifts = [[0, 0, 0]], gains = [];
 for (let k = 1; k < nFrames; k++) shifts.push([(rand() * 2 - 1) * 3, (rand() * 2 - 1) * 3, (rand() * 2 - 1) * maxRot]); // ±3 GT px = ±1.5 input px
 const frames = shifts.map(([sx, sy, deg], k) => {
   const warp = hrWarp(sx, sy, deg);
   if (k && wobble) warp.field = wobbleField(k);
   const sh = k ? SR.resampleRegion(G, { scale: 1, warp, width: G.width, height: G.height }) : G;
-  const lo = SR.downsampleBox(sh, 2);
+  const lens = lensSigma ? gaussBlurRGBA(sh, lensSigma) : sh;
+  const lo = pointSample ? decimate(lens) : SR.downsampleBox(lens, 2);
+  const g = k && gainVar ? 1 + (rand() * 2 - 1) * gainVar : 1;
+  gains.push(g);
+  if (g !== 1) for (let i = 0; i < lo.data.length; i++) if ((i & 3) !== 3) lo.data[i] = lo.data[i] * g;
   for (let i = 0; i < lo.data.length; i++) if ((i & 3) !== 3) lo.data[i] = lo.data[i] + noise * gauss();
   const enc = encode(lo, quality);
   const file = path.join(outDir, `frame_${k}.jpg`);
@@ -131,7 +160,27 @@ savePng(cropImg(G, crop), path.join(outDir, 'crop_ground-truth.png'));
 savePng(cropImg(frames[0], crop.map((v) => v >> 1)), path.join(outDir, 'crop_input-frame0-1x.png'));
 
 t0 = t(); score('single-lanczos', SR.resampleRegion(frames[0], { scale: 2, width: G.width, height: G.height }), t() - t0);
-for (const mode of SR.MODES) { t0 = t(); const m = SR.merge(frames, reg.warps, { mode }); score(mode, m, t() - t0); }
+let meanImg = null;
+for (const mode of SR.MODES) { t0 = t(); const m = SR.merge(frames, reg.warps, { mode }); score(mode, m, t() - t0); if (mode === 'mean') meanImg = m; }
+if (args.auto) {
+  t0 = t();
+  const pick = SR.chooseDeblur(frames, reg.warps, reg.details, 0);
+  const ms = t() - t0;
+  console.log('auto deblur pick', pick.amount, JSON.stringify(Object.fromEntries(Object.entries(pick.errors).map(([k, v]) => [k, +v.toFixed(3)]))), `${Math.round(ms)} ms`);
+  score('mean+auto', pick.amount ? SR.deblur(meanImg, { amount: pick.amount }) : meanImg, ms);
+  results[results.length - 1].autoAmount = pick.amount;
+}
+// --deblur "6:1,6:0.5" = iterations:amount pairs scored on the mean (and on the single photo, as a control)
+for (const spec of (args.deblur || '').split(',').filter(Boolean)) {
+  const [iterations, amount] = spec.split(':').map(Number);
+  t0 = t(); score(`mean+deblur${iterations}x${amount}`, SR.deblur(meanImg, { iterations, amount }), t() - t0);
+  if (args.deblurSingle) score(`single+deblur${iterations}x${amount}`, SR.deblur(SR.resampleRegion(frames[0], { scale: 2, width: G.width, height: G.height }), { iterations, amount }), 0);
+}
+if (gainVar) {
+  const noMatch = SR.registerBurst(frames, () => {}, { refIndex: 0, matchBrightness: false });
+  t0 = t(); score('mean-no-brightness-match', SR.merge(frames, noMatch.warps, { mode: 'mean' }), t() - t0);
+  console.log('true gains', gains.map((g) => g.toFixed(4)).join(', '), '| estimated', reg.details.map((d) => (d.gain || [1, 1, 1]).map((v) => (1 / v).toFixed(4)).join('/')).join(', '));
+}
 if (wobble) {
   const affineOnly = SR.registerBurst(frames, () => {}, { refIndex: 0, local: false });
   t0 = t(); score('mean-affine-only', SR.merge(frames, affineOnly.warps, { mode: 'mean' }), t() - t0);
@@ -139,6 +188,6 @@ if (wobble) {
 
 fs.writeFileSync(path.join(outDir, 'results.json'), JSON.stringify({
   groundTruth: path.basename(gtPath), size: [G.width, G.height], seed, frames: nFrames, noise, quality, maxRot, crop,
-  wobble, shiftsAndRotations: shifts, estimated: reg.warps, fitRms: reg.details.map((d) => d.fitRms), inliers: reg.details.map((d) => d.inliers), registrationErrorPx: regErr, registrationMs: Math.round(regMs), results,
+  wobble, gainVar, gains, shiftsAndRotations: shifts, estimated: reg.warps, fitRms: reg.details.map((d) => d.fitRms), inliers: reg.details.map((d) => d.inliers), registrationErrorPx: regErr, registrationMs: Math.round(regMs), results,
 }, null, 2));
 console.log('wrote', outDir);

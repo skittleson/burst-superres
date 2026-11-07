@@ -458,22 +458,86 @@ function createSRCore() {
     return r;
   }
 
+  // ---------- brightness matching ----------
+  //
+  // Exposure flicker or auto exposure makes one photo a little brighter than
+  // another. Alignment compares brightness, and the merge averages it, so a
+  // per-photo gain is matched first (multiplicative, like an exposure change).
+
+  // Mean luma over the central 80% of the frame (motion barely moves it).
+  function centralMean(L) {
+    const x0 = Math.floor(L.w * 0.1), x1 = Math.ceil(L.w * 0.9), y0 = Math.floor(L.h * 0.1), y1 = Math.ceil(L.h * 0.9);
+    let s = 0, n = 0;
+    for (let y = y0; y < y1; y += 2) for (let x = x0; x < x1; x += 2) { s += L.d[y * L.w + x]; n++; }
+    return s / n;
+  }
+
+  function scaleLuma(L, g) {
+    if (Math.abs(g - 1) < 1e-4) return L;
+    const d = new Float32Array(L.d.length);
+    for (let i = 0; i < d.length; i++) d[i] = L.d[i] * g;
+    return { w: L.w, h: L.h, d };
+  }
+
+  // Per-channel gain that maps `frame` onto `ref` through warp W: the median,
+  // over 32 px blocks, of ref block mean / frame block mean (sampled through
+  // the warp). Blocks near black or white, or cells the local field rejected,
+  // are skipped. Median = robust to things that moved.
+  function channelGains(ref, frame, W) {
+    const B = 32, { width: w, height: h } = ref, F = W.field;
+    const ratios = [[], [], []];
+    const sample = (img, u, v, c) => {
+      const x = clamp(u, 0, img.width - 1.001), y = clamp(v, 0, img.height - 1.001), ix = x | 0, iy = y | 0, fx = x - ix, fy = y - iy;
+      const o = (iy * img.width + ix) * 4 + c, r = img.width * 4, d = img.data;
+      return (1 - fy) * ((1 - fx) * d[o] + fx * d[o + 4]) + fy * ((1 - fx) * d[o + r] + fx * d[o + r + 4]);
+    };
+    for (let by = B; by + B < h; by += B) for (let bx = B; bx + B < w; bx += B) {
+      if (F) {
+        const i = clamp(Math.round((bx + B / 2 - F.x0) / F.T), 0, F.nx - 1), j = clamp(Math.round((by + B / 2 - F.y0) / F.T), 0, F.ny - 1);
+        if (!F.ok[j * F.nx + i]) continue;
+      }
+      const sr = [0, 0, 0], sf = [0, 0, 0];
+      let inside = true;
+      for (let y = by + 2; y < by + B; y += 4) for (let x = bx + 2; x < bx + B; x += 4) {
+        const [u, v] = mapPoint(W, F, x, y);
+        if (u < 1 || v < 1 || u > w - 2 || v > h - 2) { inside = false; break; }
+        const o = (y * w + x) * 4;
+        for (let c = 0; c < 3; c++) { sr[c] += ref.data[o + c]; sf[c] += sample(frame, u, v, c); }
+      }
+      if (!inside) continue;
+      for (let c = 0; c < 3; c++) {
+        const mr = sr[c] / 64, mf = sf[c] / 64;
+        if (mr > 16 && mr < 240 && mf > 16 && mf < 240) ratios[c].push(mr / mf);
+      }
+    }
+    return ratios.map((r) => {
+      if (r.length < 16) return 1;
+      r.sort((a, b) => a - b);
+      return r[r.length >> 1];
+    });
+  }
+
   // Registers every frame against a reference: the sharpest one unless
   // opts.refIndex is given (the benchmark pins it to keep ground truth aligned).
+  // opts.matchBrightness (default true) also fits a per-photo, per-channel gain.
   function registerBurst(frames, onProgress = () => {}, opts = {}) {
     const n = frames.length;
     const sharp = frames.map((f, i) => { onProgress(i / n * 0.2, 'Measuring sharpness'); return sharpness(f); });
     let refIndex = 0;
     if (opts.refIndex != null) refIndex = opts.refIndex;
     else for (let i = 1; i < n; i++) if (sharp[i] > sharp[refIndex]) refIndex = i;
-    const ref = frames[refIndex];
-    const refL = toLuma(ref), refPyr = buildPyramid(refL);
+    const ref = frames[refIndex], match = opts.matchBrightness !== false;
+    const refL = toLuma(ref), refPyr = buildPyramid(refL), refMean = centralMean(refL);
     const results = frames.map((f, i) => {
       onProgress(0.2 + i / n * 0.8, `Aligning photo ${i + 1} of ${n}`);
-      if (i === refIndex) return { warp: { ...IDENTITY }, rms: 0, fitRms: 0, inliers: 0, tiles: [], err: 0, mode: 'reference', badFraction: 0, verdict: 'good' };
+      if (i === refIndex) return { warp: { ...IDENTITY }, rms: 0, fitRms: 0, inliers: 0, tiles: [], err: 0, mode: 'reference', badFraction: 0, verdict: 'good', gain: [1, 1, 1] };
       if (f.width !== ref.width || f.height !== ref.height) throw new Error('All photos must have the same dimensions.');
-      const fL = toLuma(f);
-      return finishRegistration(refL, fL, registerLuma(refL, fL, refPyr), opts);
+      let fL = toLuma(f);
+      if (match) fL = scaleLuma(fL, refMean / Math.max(1e-3, centralMean(fL)));   // rough gain, for alignment only
+      const r = finishRegistration(refL, fL, registerLuma(refL, fL, refPyr), opts);
+      r.gain = match ? channelGains(ref, f, r.warp) : [1, 1, 1];
+      if (match) r.warp = { ...r.warp, gain: r.gain };
+      return r;
     });
     onProgress(1, 'Aligned');
     return { refIndex, warps: results.map((r) => r.warp), details: results, sharpness: sharp };
@@ -575,6 +639,16 @@ function createSRCore() {
    * field flagged as misaligned get valid = 0.
    */
   function renderStrip(img, warp, scale, X0, outW, Y0, Y1, out, valid) {
+    renderStripRaw(img, warp, scale, X0, outW, Y0, Y1, out, valid);
+    const g = warp.gain;
+    if (g && (g[0] !== 1 || g[1] !== 1 || g[2] !== 1)) {
+      const n = (Y1 - Y0) * outW * 3;
+      for (let i = 0; i < n; i += 3) { out[i] *= g[0]; out[i + 1] *= g[1]; out[i + 2] *= g[2]; }
+    }
+    return out;
+  }
+
+  function renderStripRaw(img, warp, scale, X0, outW, Y0, Y1, out, valid) {
     const F = warp.field;
     if (!F) return warpStrip(img, warp, scale, X0, outW, Y0, Y1, out, valid);
     const rows = Y1 - Y0, yc = ((Y0 + Y1) / 2 + 0.5) / scale - 0.5;
@@ -633,8 +707,10 @@ function createSRCore() {
     for (const m of modes) if (!MODES.includes(m)) throw new Error('Unknown merge mode: ' + m);
     const scale = opts.scale || 2, refIndex = opts.refIndex || 0;
     const onProgress = opts.onProgress || (() => {});
-    const { width: w, height: h } = frames[0];
-    const W = w * scale, H = h * scale, N = frames.length;
+    const { width: w, height: h } = frames[0], N = frames.length;
+    // opts.region { x, y, width, height } (output px) merges just that part
+    const R = opts.region || { x: 0, y: 0, width: w * scale, height: h * scale };
+    const W = R.width, H = R.height;
     const stripRows = opts.stripRows || 32, line = W * 3;
     const outs = Object.fromEntries(modes.map((m) => [m, new Uint8ClampedArray(W * H * 4)]));
     const strips = frames.map(() => new Float32Array(stripRows * line));
@@ -644,7 +720,7 @@ function createSRCore() {
     for (let Y0 = 0; Y0 < H; Y0 += stripRows) {
       const Y1 = Math.min(H, Y0 + stripRows), n = (Y1 - Y0) * W;
       onProgress(Y0 / H, 'Merging');
-      for (let k = 0; k < N; k++) renderStrip(frames[k], warps[k], scale, 0, W, Y0, Y1, strips[k], valid[k]);
+      for (let k = 0; k < N; k++) renderStrip(frames[k], warps[k], scale, R.x, W, R.y + Y0, R.y + Y1, strips[k], valid[k]);
 
       for (const mode of modes) {
         if (mode === 'pairwise') {
@@ -678,6 +754,143 @@ function createSRCore() {
     onProgress(1, 'Merged');
     const images = Object.fromEntries(modes.map((m) => [m, { width: W, height: H, data: outs[m] }]));
     return opts.modes ? images : images[modes[0]];
+  }
+
+  // ---------- deblur (after the merge) ----------
+  //
+  // Richardson–Lucy deconvolution with a mild 3-tap blur model
+  // [1/4, 1/2, 1/4] per axis (each output pixel is half an input pixel; the
+  // sensor integrates over the whole input pixel). Merging several photos
+  // lowers the noise enough for this to recover detail; on one photo alone it
+  // mostly amplifies noise.
+  //
+  // `amount` (0..1) blends the result per pixel by local detail, like a
+  // Wiener filter: flat areas (variance near the noise level) keep the merge,
+  // textured areas get the deconvolved value. Runs in strips with a halo, so
+  // memory stays a few strips of float.
+
+  const RL_K = [0.25, 0.5, 0.25];
+
+  // Noise sigma of an RGBA image (Immerkær 1996: 3x3 Laplacian-difference
+  // kernel, on luma, sampled every 4th row).
+  function estimateNoise(img) {
+    const { width: w, height: h, data: d } = img;
+    const Y = (i) => 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    let s = 0, n = 0;
+    for (let y = 1; y < h - 1; y += 4) for (let x = 1; x < w - 1; x++) {
+      const o = (y * w + x) * 4, r = w * 4;
+      const v = Y(o - r - 4) - 2 * Y(o - r) + Y(o - r + 4) - 2 * Y(o - 4) + 4 * Y(o) - 2 * Y(o + 4) + Y(o + r - 4) - 2 * Y(o + r) + Y(o + r + 4);
+      s += Math.abs(v); n++;
+    }
+    return Math.sqrt(Math.PI / 2) / 6 * s / n;
+  }
+
+  function blur3(src, w, h, out, tmp) {
+    for (let y = 0; y < h; y++) {
+      const o = y * w;
+      tmp[o] = 0.75 * src[o] + 0.25 * src[o + 1];
+      for (let x = 1; x < w - 1; x++) tmp[o + x] = 0.25 * src[o + x - 1] + 0.5 * src[o + x] + 0.25 * src[o + x + 1];
+      tmp[o + w - 1] = 0.25 * src[o + w - 2] + 0.75 * src[o + w - 1];
+    }
+    for (let y = 0; y < h; y++) {
+      const a = Math.max(0, y - 1) * w, b = y * w, c = Math.min(h - 1, y + 1) * w;
+      for (let x = 0; x < w; x++) out[b + x] = 0.25 * tmp[a + x] + 0.5 * tmp[b + x] + 0.25 * tmp[c + x];
+    }
+    return out;
+  }
+
+  /**
+   * opts: { iterations = 6, amount = 1, noise (sigma, levels; estimated if
+   * missing), stripRows = 256, onProgress }. Returns a new RGBA image.
+   */
+  function deblur(img, opts = {}) {
+    const iters = opts.iterations || 6, amount = opts.amount == null ? 1 : opts.amount;
+    const { width: W, height: H, data } = img, out = new Uint8ClampedArray(data.length);
+    const noise = opts.noise == null ? estimateNoise(img) : opts.noise, nv = Math.max(0.25, noise * noise);
+    const halo = 2 * iters + 4, rows = opts.stripRows || 256, onProgress = opts.onProgress || (() => {});
+    for (let Y0 = 0; Y0 < H; Y0 += rows) {
+      onProgress(Y0 / H, 'Sharpening');
+      const Y1 = Math.min(H, Y0 + rows), a = Math.max(0, Y0 - halo), b = Math.min(H, Y1 + halo), h = b - a, n = W * h;
+      const obs = new Float32Array(n), est = new Float32Array(n), tmp = new Float32Array(n), bl = new Float32Array(n);
+      for (let c = 0; c < 3; c++) {
+        for (let i = 0, j = a * W * 4 + c; i < n; i++, j += 4) obs[i] = data[j] + 1;
+        est.set(obs);
+        for (let it = 0; it < iters; it++) {
+          blur3(est, W, h, bl, tmp);
+          for (let i = 0; i < n; i++) bl[i] = obs[i] / Math.max(bl[i], 1e-3);
+          blur3(bl, W, h, bl, tmp);
+          for (let i = 0; i < n; i++) est[i] *= bl[i];
+        }
+        // local variance of the observation (3x3 box), for the detail weight
+        for (let y = Y0; y < Y1; y++) {
+          const r = y - a;
+          for (let x = 0; x < W; x++) {
+            let s = 0, s2 = 0, m = 0;
+            for (let dy = -1; dy <= 1; dy++) {
+              const rr = clamp(r + dy, 0, h - 1) * W;
+              for (let dx = -1; dx <= 1; dx++) { const v = obs[rr + clamp(x + dx, 0, W - 1)]; s += v; s2 += v * v; m++; }
+            }
+            const variance = Math.max(0, s2 / m - (s / m) * (s / m));
+            const wgt = amount * Math.max(0, variance - nv) / (variance + 1e-6);
+            const i = r * W + x;
+            out[(y * W + x) * 4 + c] = obs[i] - 1 + wgt * (est[i] - obs[i]);
+          }
+        }
+      }
+      for (let y = Y0; y < Y1; y++) for (let x = 0; x < W; x++) out[(y * W + x) * 4 + 3] = 255;
+    }
+    onProgress(1, 'Sharpened');
+    return { width: W, height: H, data: out };
+  }
+
+  /**
+   * Choose the deblur amount from the burst itself (hold-out validation):
+   * leave out the best-aligned non-reference photo, merge the others on a few
+   * regions, deblur each candidate amount, shrink it back to photo size with
+   * the 2x2 sensor box, and compare with the left-out photo seen through its
+   * own warp. The amount that predicts the unseen photo best wins.
+   * Needs 3+ photos. Returns { amount, errors: { amount: rms }, held }.
+   */
+  function chooseDeblur(frames, warps, details, refIndex, opts = {}) {
+    const amounts = opts.amounts || [0, 0.25, 0.5, 0.75, 1];
+    const iterations = opts.iterations || 6, scale = 2, N = frames.length;
+    if (N < 3) return { amount: opts.fallback ?? 0, errors: {}, held: -1, reason: 'needs 3 or more photos' };
+    let held = -1;
+    for (let k = 0; k < N; k++) if (k !== refIndex && (held < 0 || details[k].err < details[held].err)) held = k;
+    const keep = [...Array(N).keys()].filter((k) => k !== held);
+    const { width: w, height: h } = frames[0];
+    const S = Math.min(384, (Math.min(w, h) * scale) >> 2) & ~1, pad = 2 * iterations + 8;
+    const regions = [];
+    for (const fy of [0.3, 0.7]) for (const fx of [0.3, 0.7]) {
+      regions.push({ x: (Math.round(fx * w * scale - S / 2 - pad)) & ~1, y: (Math.round(fy * h * scale - S / 2 - pad)) & ~1, width: S + 2 * pad, height: S + 2 * pad });
+    }
+    const sse = Object.fromEntries(amounts.map((a) => [a, 0]));
+    let count = 0;
+    for (const R of regions) {
+      const X = merge(keep.map((k) => frames[k]), keep.map((k) => warps[k]), { region: R, refIndex: keep.indexOf(refIndex), mode: 'mean' });
+      // the held-out photo on the reference grid at photo resolution (scale 1)
+      const lx = R.x / 2, ly = R.y / 2, lw = R.width / 2, lh = R.height / 2;
+      const Fk = resampleRegion(frames[held], { scale: 1, warp: warps[held], x: lx, y: ly, width: lw, height: lh });
+      const g = warps[held].gain || [1, 1, 1];
+      const lp = pad / 2;
+      const noise = estimateNoise(X);
+      for (const a of amounts) {
+        const D = a ? deblur(X, { iterations, amount: a, noise }) : X;
+        for (let y = lp; y < lh - lp; y++) for (let x = lp; x < lw - lp; x++) {
+          for (let c = 0; c < 3; c++) {
+            const o = (2 * y * R.width + 2 * x) * 4 + c, r = R.width * 4;
+            const pred = 0.25 * (D.data[o] + D.data[o + 4] + D.data[o + r] + D.data[o + r + 4]);
+            const e = pred - Fk.data[(y * lw + x) * 4 + c] * g[c];
+            sse[a] += e * e;
+          }
+          if (a === amounts[0]) count += 3;
+        }
+      }
+    }
+    const errors = Object.fromEntries(amounts.map((a) => [a, Math.sqrt(sse[a] / count)]));
+    let amount = amounts[0];
+    for (const a of amounts) if (errors[a] < errors[amount]) amount = a;
+    return { amount, errors, held };
   }
 
   function median(a, m) {
@@ -779,7 +992,7 @@ function createSRCore() {
 
   return {
     MODES, IDENTITY, translation, applyWarp, mapPoint, verdictFor, defaultSelection, toLuma, buildPyramid, sharpness,
-    register, registerBurst, lanczos3, resampleRegion, merge, compareToSingle, psnr, ssim, downsampleBox,
+    register, registerBurst, lanczos3, resampleRegion, merge, deblur, chooseDeblur, estimateNoise, compareToSingle, psnr, ssim, downsampleBox,
   };
 }
 

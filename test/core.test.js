@@ -237,6 +237,69 @@ test('merge with several modes in one pass matches separate merges', () => {
   assert.deepEqual(both.median.data, SR.merge(frames, warps, { mode: 'median' }).data);
 });
 
+// ---- brightness matching ----
+
+test('registerBurst matches a 5% brighter photo per channel, and the merge uses it', () => {
+  const G = waves(1200, 900, 21, 0.8);
+  const ref = synthFrame(G, 0, 0), f = synthFrame(G, 1.3, -0.7);
+  const bright = { width: f.width, height: f.height, data: f.data.map((v, i) => ((i & 3) === 3 ? v : v * 1.05)) };
+  const reg = SR.registerBurst([ref, bright], () => {}, { refIndex: 0 });
+  for (const g of reg.details[1].gain) assert.ok(Math.abs(g - 1 / 1.05) < 0.003, `gain ${g}`);
+  const off = SR.registerBurst([ref, bright], () => {}, { refIndex: 0, matchBrightness: false });
+  const truth = SR.resampleRegion(G, { scale: 1, width: 1200, height: 900 });
+  const pOn = SR.psnr(SR.merge([ref, bright], reg.warps), truth, 24), pOff = SR.psnr(SR.merge([ref, bright], off.warps), truth, 24);
+  assert.ok(pOn > pOff + 1, `matched ${pOn.toFixed(2)} dB vs not ${pOff.toFixed(2)} dB`);
+});
+
+// ---- deblur ----
+
+test('deblur recovers detail from a [1/4 1/2 1/4] blur and leaves flat areas alone', () => {
+  const G = waves(240, 180, 9, 1.2);
+  const k = [0.25, 0.5, 0.25];
+  const blurred = { width: 240, height: 180, data: new Uint8ClampedArray(G.data.length) };
+  for (let y = 0; y < 180; y++) for (let x = 0; x < 240; x++) for (let c = 0; c < 4; c++) {
+    let v = 0;
+    for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) v += k[j + 1] * k[i + 1] * G.data[((Math.min(179, Math.max(0, y + j))) * 240 + Math.min(239, Math.max(0, x + i))) * 4 + c];
+    blurred.data[(y * 240 + x) * 4 + c] = c === 3 ? 255 : v;
+  }
+  const d = SR.deblur(blurred, { amount: 1, noise: 0.5 });
+  assert.ok(SR.psnr(d, G, 8) > SR.psnr(blurred, G, 8) + 2, `${SR.psnr(d, G, 8).toFixed(2)} vs ${SR.psnr(blurred, G, 8).toFixed(2)} dB`);
+  assert.deepEqual(SR.deblur(blurred, { amount: 0 }).data, blurred.data);
+  const flat = { width: 64, height: 64, data: new Uint8ClampedArray(64 * 64 * 4).fill(120) };
+  const r = rng(3); for (let i = 0; i < flat.data.length; i++) flat.data[i] = (i & 3) === 3 ? 255 : 120 + (r() - 0.5) * 4;
+  let maxChange = 0; const fd = SR.deblur(flat, { amount: 1 });
+  for (let i = 0; i < flat.data.length; i++) maxChange = Math.max(maxChange, Math.abs(fd.data[i] - flat.data[i]));
+  assert.ok(maxChange <= 2, `flat noise changed by up to ${maxChange} levels`);
+});
+
+test('deblur in strips equals deblur in one piece', () => {
+  const G = waves(200, 150, 5, 1.0);
+  const a = SR.deblur(G, { amount: 1, noise: 1 }), b = SR.deblur(G, { amount: 1, noise: 1, stripRows: 17 });
+  let maxDiff = 0; for (let i = 0; i < a.data.length; i++) maxDiff = Math.max(maxDiff, Math.abs(a.data[i] - b.data[i]));
+  assert.ok(maxDiff <= 1, `maxDiff ${maxDiff}`);
+});
+
+test('chooseDeblur picks some deblur for box-sampled aliased bursts, and needs 3 photos', () => {
+  const G = waves(1200, 900, 31, 1.6);
+  const shots = [[0, 0], [1.1, -0.6], [-0.7, 1.3], [0.4, 0.9]];
+  const frames = shots.map(([x, y]) => synthFrame(G, x, y));
+  const reg = SR.registerBurst(frames, () => {}, { refIndex: 0 });
+  const pick = SR.chooseDeblur(frames, reg.warps, reg.details, 0);
+  assert.ok(pick.amount > 0, JSON.stringify(pick.errors));
+  assert.equal(SR.chooseDeblur(frames.slice(0, 2), reg.warps, reg.details, 0, { fallback: 0.5 }).amount, 0.5);
+});
+
+test('merge of a region equals the same region of the full merge', () => {
+  const G = waves(240, 180, 13);
+  const frames = [[0, 0], [1.2, -0.4], [-0.6, 0.9]].map(([x, y]) => synthFrame(G, x, y));
+  const warps = [SR.IDENTITY, SR.translation(-0.6, 0.2), SR.translation(0.3, -0.45)];
+  const full = SR.merge(frames, warps), R = { x: 37, y: 51, width: 60, height: 40 };
+  const part = SR.merge(frames, warps, { region: R });
+  for (let r = 0; r < R.height; r++) for (let c = 0; c < R.width; c++) for (let ch = 0; ch < 3; ch++) {
+    assert.ok(Math.abs(part.data[(r * R.width + c) * 4 + ch] - full.data[((r + R.y) * full.width + c + R.x) * 4 + ch]) <= 1);
+  }
+});
+
 test('merge rejects unknown modes', () => {
   const f = waves(8, 8);
   assert.throws(() => SR.merge([f], [SR.IDENTITY], { mode: 'ai' }), /Unknown merge mode/);
