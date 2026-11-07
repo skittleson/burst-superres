@@ -8,7 +8,7 @@ const EXIF = createExif();
 const BURSTS = createBursts();
 const RAWF = createRaw();
 
-const VERSION = '0.3.0';
+const VERSION = '0.3.1';
 const GUIDE_URL = 'https://dctmlab.taila665d5.ts.net/';
 const SITE_URL = 'https://docodethatmatters.com/';
 const IMAGE_EXT = /\.(jpe?g|png|arw)$/i;

@@ -3,7 +3,7 @@
   "title": "Burst Super-Res",
   "size": "1280x820",
   "id": "com.docodethatmatters.burstsuperres",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "minTinyjsVersion": "0.51.1",
   "readAccess": true,
   "attribution": "From the Sony A6000/A6400 Hacking Guide · Do Code That Matters"

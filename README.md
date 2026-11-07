@@ -30,6 +30,25 @@ Get the latest version from [Releases](https://github.com/skittleson/burst-super
 
 The builds are not signed. On macOS, right-click the app and pick **Open** the first time (or **System Settings > Privacy & Security > Open Anyway**). On Windows, click **More info > Run anyway** if SmartScreen warns you. On Linux, install `libwebkit2gtk-4.1-0` first, then `chmod +x` the AppImage and run it (it adds itself to your app menu on first run). The AppImage does not bundle WebKitGTK.
 
+### Verify your download
+
+Every release file has a GitHub build attestation (Sigstore): proof that it was built by this repository's release workflow from the tagged commit. With the GitHub CLI:
+
+```sh
+gh attestation verify burst-superres-0.3.1-linux-x86_64.AppImage -R skittleson/burst-superres
+```
+
+The checksum file is also GPG-signed, and the AppImages carry an embedded GPG signature. The release key is [`docs/signing-key.asc`](docs/signing-key.asc), fingerprint `47FA AD5F 8499 2200 15C8  F5EA 019D FCD0 B211 3CAB`:
+
+```sh
+gpg --import signing-key.asc
+gpg --verify SHA256SUMS.txt.asc SHA256SUMS.txt     # "Good signature from Burst Super-Res release signing"
+sha256sum -c --ignore-missing SHA256SUMS.txt
+./burst-superres-*-linux-x86_64.AppImage --appimage-signature   # prints the embedded signature
+```
+
+The macOS and Windows apps are not code-signed by Apple or Microsoft: that needs a paid Apple Developer ID and a Windows signing certificate. The attestation and the signed checksums still prove where the files came from.
+
 ## How to use it
 
 ![The empty window with "How to shoot a burst"](docs/media/app-start.jpg)
@@ -336,7 +355,7 @@ It adds the photos, merges, renders the compare view, saves, writes a report to 
 | macOS 15+ (universal) | Built by GitHub Actions (`tinyjs publish --universal`). Ad-hoc signed, not notarized. **Not tested.** |
 | Windows 10/11 x64 | Built by GitHub Actions (`tinyjs.cmd publish`). Not code-signed. **Not tested.** Check the Blob-URL worker and saving in WebView2 first. |
 
-Releases come from `.github/workflows/release.yml`. Push a tag like `v0.3.0` to build every platform (plus Linux AppImages) and publish them with checksums.
+Releases come from `.github/workflows/release.yml`. Push a tag like `v0.3.1` to build every platform (plus Linux AppImages) and publish them with checksums, a GPG signature (repository secret `GPG_PRIVATE_KEY`; skipped if it is not set) and build attestations.
 
 The code uses no platform-only APIs. `Uint8Array.prototype.toBase64` has a fallback for older webviews.
 

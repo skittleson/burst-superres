@@ -1,5 +1,9 @@
 Merge a burst of photos of the same static scene into one image with twice the width and height. Free tool from the [Sony A6000/A6400 Hacking Guide](https://dctmlab.taila665d5.ts.net/).
 
+## New in 0.3.1
+
+- Release files are signed: GPG signature on the checksums, embedded GPG signatures in the AppImages, and GitHub build attestations for every file. No app changes.
+
 ## New in 0.3.0
 
 - **Sony RAW (ARW).** Decoded in the app (checked against LibRaw on a real A6000 file). With 6 or more RAW photos the merge is built from the raw sensor samples of every photo. In simulations, RAW scored 0.9 to 2.5 dB better than the same burst as camera JPEGs. Only one real ARW was available for testing, so these RAW numbers are from simulated bursts.
@@ -40,4 +44,8 @@ Merge a burst of photos of the same static scene into one image with twice the w
 
 It needs a static scene and a tripod or a very steady hand. The gain over upscaling one photo was +0.7 to +1.3 dB PSNR in my tests: less noise and cleaner edges, not 4x the detail. See the README for the measurements.
 
-`SHA256SUMS.txt` lists the checksum of every file.
+## Verify
+
+`SHA256SUMS.txt` lists the checksum of every file and is GPG-signed (`SHA256SUMS.txt.asc`, key in the repository at `docs/signing-key.asc`, fingerprint `47FA AD5F 8499 2200 15C8  F5EA 019D FCD0 B211 3CAB`). The AppImages also carry an embedded signature. Every file has a GitHub build attestation:
+
+    gh attestation verify <file> -R skittleson/burst-superres

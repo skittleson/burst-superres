@@ -113,10 +113,28 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write        # create the release
+      id-token: write        # Sigstore signing for the attestations
+      attestations: write
+    env:
+      SIGNING_FPR: 47FAAD5F8499220015C8F5EA019DFCD0B2113CAB   # docs/signing-key.asc
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with: { path: artifacts, merge-multiple: true }
+
+      # Release signing key (GPG). Without the secret the release is still
+      # built and attested, just not GPG-signed.
+      - name: Import signing key
+        id: gpg
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          if [ -z "$GPG_PRIVATE_KEY" ]; then echo "no GPG_PRIVATE_KEY secret: skipping GPG signatures"; exit 0; fi
+          printf '%s\n' "$GPG_PRIVATE_KEY" | gpg --batch --import
+          gpg --batch --list-secret-keys "$SIGNING_FPR" >/dev/null
+          echo "ok=1" >> "$GITHUB_OUTPUT"
       # Linux AppImages from the release tarballs. appimagetool (x86_64) also
       # packs the arm64 one: it fetches the runtime for ARCH. WebKitGTK stays
       # a system dependency, like the tarball.
@@ -130,13 +148,29 @@ jobs:
           for pair in linux-x86_64:x86_64 linux-arm64:aarch64; do
             target=${pair%%:*}; arch=${pair##*:}
             tarball=$(ls artifacts/burst-superres-*-$target.tar.gz)
-            APPIMAGETOOL="$RUNNER_TEMP/appimagetool" packaging/appimage/make-appimage.sh \
-              "$tarball" "$arch" "${tarball%.tar.gz}.AppImage"
+            APPIMAGETOOL="$RUNNER_TEMP/appimagetool" \
+            APPIMAGETOOL_ARGS="${{ steps.gpg.outputs.ok && format('--sign --sign-key {0}', env.SIGNING_FPR) || '' }}" \
+              packaging/appimage/make-appimage.sh "$tarball" "$arch" "${tarball%.tar.gz}.AppImage"
           done
           file artifacts/*.AppImage
+          if [ -n "${{ steps.gpg.outputs.ok }}" ]; then
+            # byte search, so the arm64 AppImage is checked too (it cannot run on this runner)
+            for f in artifacts/*.AppImage; do grep -a -q -- '-----BEGIN PGP SIGNATURE-----' "$f" || { echo "no signature in $f"; exit 1; }; done
+          fi
 
       - name: Checksums
         run: cd artifacts && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Sign checksums
+        if: steps.gpg.outputs.ok
+        run: |
+          cd artifacts
+          gpg --batch --yes --local-user "$SIGNING_FPR" --armor --detach-sign --output SHA256SUMS.txt.asc SHA256SUMS.txt
+          gpg --batch --verify SHA256SUMS.txt.asc SHA256SUMS.txt
+      # Sigstore-signed build provenance for every file: verify with
+      #   gh attestation verify <file> -R skittleson/burst-superres
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: artifacts/*
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
