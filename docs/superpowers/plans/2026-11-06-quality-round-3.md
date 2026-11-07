@@ -8,7 +8,7 @@
 - [x] RAW render: Malvar–He–Cutler demosaic, WB, camera matrix, sRGB; compare with LibRaw's render
 - [x] RAW in the app: .ARW load/thumbnail (embedded preview), capture time for burst grouping, worker decode
 - [x] Measure RAW vs camera-JPEG in a simulated burst (mosaic + noise; JPEG path = demosaic + in-camera sharpen + JPEG)
-- [ ] UI: deblur control, RAW labels; README with measured numbers; screenshots; release v0.3.0
+- [x] UI: deblur control, RAW labels; README with measured numbers; screenshots; release v0.3.0
 
 ## Constraints
 
