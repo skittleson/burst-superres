@@ -32,7 +32,7 @@ The builds are not signed. On macOS, right-click the app and pick **Open** the f
 
 ### Verify your download
 
-Every release file has a GitHub build attestation (Sigstore): proof that it was built by this repository's release workflow from the tagged commit. With the GitHub CLI:
+Every release file has a GitHub build attestation (Sigstore): proof that it was built by this repository's release workflow from the tagged commit. With the GitHub CLI (2.49 or newer; older versions have no `attestation` command):
 
 ```sh
 gh attestation verify burst-superres-0.3.1-linux-x86_64.AppImage -R skittleson/burst-superres
