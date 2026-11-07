@@ -756,6 +756,75 @@ function createSRCore() {
     return opts.modes ? images : images[modes[0]];
   }
 
+  // ---------- merge straight from raw sensor samples ----------
+  //
+  // Each raw photo carries one colour per pixel (Bayer pattern). Instead of
+  // demosaicing every photo and merging the results, every output pixel
+  // gathers the raw samples of each colour near its position in every photo
+  // (3x3 around the nearest sample) with a Gaussian weight on the true
+  // sub-pixel distance, as in Wronski et al. 2019 (isotropic kernel here).
+  // The photos' shifts fill in the colours each one is missing.
+  //
+  // frames: [{ width, height, data (one value per pixel), cfa, stride?, black?, gain? }]
+  //   value used = (data[y * stride + x] - black[(y&1)*2 + (x&1)]) * gain[colour]
+  // warps: from registerBurst on demosaiced versions of the same photos.
+  // opts: { scale = 2, refIndex = 0, sigma = 0.55 (input px), region, onProgress,
+  //         toRGBA(r, g, b, out, o) to turn merged values into 8-bit (default: clamp) }
+
+  function mergeCFA(frames, warps, opts = {}) {
+    const scale = opts.scale || 2, refIndex = opts.refIndex || 0, onProgress = opts.onProgress || (() => {});
+    const sigma = opts.sigma || 0.55, inv = 1 / (2 * sigma * sigma);
+    const { width: w, height: h } = frames[0], N = frames.length;
+    const R = opts.region || { x: 0, y: 0, width: w * scale, height: h * scale };
+    const W = R.width, H = R.height, out = new Uint8ClampedArray(W * H * 4);
+    const toRGBA = opts.toRGBA || ((r, g, b, o, i) => { o[i] = r; o[i + 1] = g; o[i + 2] = b; o[i + 3] = 255; });
+    const LUTN = 2048, LUTMAX = 9, lut = new Float32Array(LUTN + 1);
+    for (let i = 0; i <= LUTN; i++) lut[i] = Math.exp(-(i / LUTN) * LUTMAX * inv);
+    const rows = 32, num = new Float32Array(rows * W * 3), den = new Float32Array(rows * W * 3);
+    for (let Y0 = 0; Y0 < H; Y0 += rows) {
+      const Y1 = Math.min(H, Y0 + rows);
+      onProgress(Y0 / H, 'Merging raw');
+      num.fill(0); den.fill(0);
+      for (let k = 0; k < N; k++) {
+        const f = frames[k], d = f.data, cfa = f.cfa, warp = warps[k], F = warp.field, stride = f.stride || f.width;
+        const bl = f.black || [0, 0, 0, 0], wg = warp.gainLinear || warp.gain || [1, 1, 1], fg = f.gain || [1, 1, 1];
+        const g = [wg[0] * fg[0], wg[1] * fg[1], wg[2] * fg[2]];
+        for (let c0 = 0; c0 < W; c0 += 128) {
+          const cw = Math.min(128, W - c0);
+          const xc = (R.x + c0 + cw / 2 + 0.5) / scale - 0.5, yc = ((R.y + Y0 + R.y + Y1) / 2 + 0.5) / scale - 0.5;
+          const L = F ? localAffineAt(warp, F, xc, yc) : warp;
+          for (let Y = Y0; Y < Y1; Y++) {
+            const y = (R.y + Y + 0.5) / scale - 0.5;
+            let cell = -1;
+            if (F && k !== refIndex) cell = clamp(Math.round((y - F.y0) / F.T), 0, F.ny - 1) * F.nx;
+            for (let X = c0; X < c0 + cw; X++) {
+              const x = (R.x + X + 0.5) / scale - 0.5;
+              if (cell >= 0 && !F.ok[cell + clamp(Math.round((x - F.x0) / F.T), 0, F.nx - 1)]) continue;
+              const qx = L.a * x + L.b * y + L.c, qy = L.d * x + L.e * y + L.f;
+              const ix = Math.round(qx), iy = Math.round(qy);
+              if (ix < 1 || iy < 1 || ix > f.width - 2 || iy > f.height - 2) continue;
+              const ob = ((Y - Y0) * W + X) * 3;
+              for (let sy = iy - 1; sy <= iy + 1; sy++) {
+                const dy = qy - sy, row = sy * stride, crow = (sy & 1) * 2;
+                for (let sx = ix - 1; sx <= ix + 1; sx++) {
+                  const dx = qx - sx, d2 = dx * dx + dy * dy;
+                  const wgt = lut[Math.min(LUTN, (d2 / LUTMAX * LUTN) | 0)], c = cfa[crow + (sx & 1)];
+                  num[ob + c] += wgt * (d[row + sx] - bl[crow + (sx & 1)]) * g[c]; den[ob + c] += wgt;
+                }
+              }
+            }
+          }
+        }
+      }
+      for (let Y = Y0; Y < Y1; Y++) for (let X = 0; X < W; X++) {
+        const ob = ((Y - Y0) * W + X) * 3;
+        toRGBA(num[ob] / (den[ob] || 1), num[ob + 1] / (den[ob + 1] || 1), num[ob + 2] / (den[ob + 2] || 1), out, (Y * W + X) * 4);
+      }
+    }
+    onProgress(1, 'Merged');
+    return { width: W, height: H, data: out };
+  }
+
   // ---------- deblur (after the merge) ----------
   //
   // Richardson–Lucy deconvolution with a mild 3-tap blur model
@@ -850,6 +919,10 @@ function createSRCore() {
    * the 2x2 sensor box, and compare with the left-out photo seen through its
    * own warp. The amount that predicts the unseen photo best wins.
    * Needs 3+ photos. Returns { amount, errors: { amount: rms }, held }.
+   * opts.mergeRegion(keepIndices, region) replaces the default mean merge
+   * (the raw path passes its own); `frames` are always RGBA, for the
+   * comparison. Only trust this when the photos are not sharpened in camera:
+   * a sharpened held-out photo rewards matching the camera's sharpening.
    */
   function chooseDeblur(frames, warps, details, refIndex, opts = {}) {
     const amounts = opts.amounts || [0, 0.25, 0.5, 0.75, 1];
@@ -867,7 +940,8 @@ function createSRCore() {
     const sse = Object.fromEntries(amounts.map((a) => [a, 0]));
     let count = 0;
     for (const R of regions) {
-      const X = merge(keep.map((k) => frames[k]), keep.map((k) => warps[k]), { region: R, refIndex: keep.indexOf(refIndex), mode: 'mean' });
+      const X = opts.mergeRegion ? opts.mergeRegion(keep, R)
+        : merge(keep.map((k) => frames[k]), keep.map((k) => warps[k]), { region: R, refIndex: keep.indexOf(refIndex), mode: 'mean' });
       // the held-out photo on the reference grid at photo resolution (scale 1)
       const lx = R.x / 2, ly = R.y / 2, lw = R.width / 2, lh = R.height / 2;
       const Fk = resampleRegion(frames[held], { scale: 1, warp: warps[held], x: lx, y: ly, width: lw, height: lh });
@@ -992,7 +1066,7 @@ function createSRCore() {
 
   return {
     MODES, IDENTITY, translation, applyWarp, mapPoint, verdictFor, defaultSelection, toLuma, buildPyramid, sharpness,
-    register, registerBurst, lanczos3, resampleRegion, merge, deblur, chooseDeblur, estimateNoise, compareToSingle, psnr, ssim, downsampleBox,
+    register, registerBurst, lanczos3, resampleRegion, merge, mergeCFA, deblur, chooseDeblur, estimateNoise, compareToSingle, psnr, ssim, downsampleBox,
   };
 }
 

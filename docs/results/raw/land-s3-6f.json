@@ -1,0 +1,85 @@
+{
+  "scene": "20231228_122222.JPG",
+  "size": [
+    3000,
+    2000
+  ],
+  "crop": [
+    0,
+    1000,
+    3000,
+    2000
+  ],
+  "seed": 3,
+  "frames": 6,
+  "iso": 1,
+  "sharpen": 0.6,
+  "shifts": [
+    [
+      0,
+      0
+    ],
+    [
+      1.3213607026264071,
+      -2.7680270369164646
+    ],
+    [
+      -0.2628468442708254,
+      -2.550431942101568
+    ],
+    [
+      1.5780323389917612,
+      -0.11291749309748411
+    ],
+    [
+      -0.07962255226448178,
+      -2.0291966004297137
+    ],
+    [
+      -1.4204623899422586,
+      0.3156433473341167
+    ]
+  ],
+  "rows": [
+    {
+      "method": "jpeg single 2x",
+      "psnr": 29.462,
+      "ms": 0
+    },
+    {
+      "method": "jpeg mean",
+      "psnr": 31.233,
+      "ms": 2155
+    },
+    {
+      "method": "jpeg mean + deblur(auto)",
+      "psnr": 30.405,
+      "ms": 0
+    },
+    {
+      "method": "raw single (demosaic) 2x",
+      "psnr": 31.315,
+      "ms": 0
+    },
+    {
+      "method": "raw demosaic-then-mean",
+      "psnr": 32.418,
+      "ms": 2052
+    },
+    {
+      "method": "raw demosaic-then-mean + deblur(auto)",
+      "psnr": 33.015,
+      "ms": 0
+    },
+    {
+      "method": "raw direct (mergeCFA s=0.22)",
+      "psnr": 33.091,
+      "ms": 2795
+    },
+    {
+      "method": "raw direct s=0.22 + deblur(auto)",
+      "psnr": 33.091,
+      "ms": 0
+    }
+  ]
+}
