@@ -97,13 +97,70 @@ function createExif() {
     return m ? Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]) / 1000 : null;
   }
 
+  /**
+   * A minimal little-endian EXIF APP1 payload from plain fields (used for
+   * RAW input, whose EXIF is not a JPEG APP1 block). Fields, all optional:
+   * make, model, software, dateTimeOriginal ("YYYY:MM:DD HH:MM:SS"),
+   * exposureTime [num, den], fNumber [num, den], iso, focalLength [num, den],
+   * lensModel, width, height. Orientation is always 1.
+   */
+  function buildApp1(f) {
+    const ifd0 = [], exif = [];
+    const ascii = (tag, v) => v && { tag, type: 2, ascii: v };
+    const rat = (tag, v) => v && v[1] && { tag, type: 5, rats: [v] };
+    const short = (tag, v) => v != null && { tag, type: 3, value: v };
+    const long = (tag, v) => v != null && { tag, type: 4, value: v };
+    ifd0.push(ascii(0x010f, f.make), ascii(0x0110, f.model), short(0x0112, 1), ascii(0x0131, f.software), ascii(0x0132, f.dateTimeOriginal));
+    exif.push(rat(0x829a, f.exposureTime), rat(0x829d, f.fNumber), short(0x8827, f.iso), ascii(0x9003, f.dateTimeOriginal),
+      rat(0x920a, f.focalLength), long(0xa002, f.width), long(0xa003, f.height), ascii(0xa434, f.lensModel));
+    const e0 = ifd0.filter(Boolean), e1 = exif.filter(Boolean);
+    e0.push({ tag: 0x8769, type: 4, value: 0 });                 // ExifIFD pointer, patched below
+    e0.sort((a, b) => a.tag - b.tag); e1.sort((a, b) => a.tag - b.tag);
+    const bytes = [];
+    const u16 = (v) => bytes.push(v & 255, (v >> 8) & 255);
+    const u32 = (v) => bytes.push(v & 255, (v >>> 8) & 255, (v >>> 16) & 255, v >>> 24);
+    // layout: header 8, IFD0, ExifIFD, then values
+    const ifdSize = (n) => 2 + n * 12 + 4;
+    const at0 = 8, at1 = at0 + ifdSize(e0.length);
+    let dataAt = at1 + ifdSize(e1.length);
+    const data = [];
+    const place = (e) => {
+      if (e.ascii != null) {
+        const b = [...e.ascii].map((c) => c.charCodeAt(0) & 255); b.push(0);
+        e.count = b.length;
+        if (b.length <= 4) { e.inline = b; return; }
+        e.offset = dataAt; data.push(...b); dataAt += b.length;
+        if (dataAt & 1) { data.push(0); dataAt++; }
+      } else if (e.rats) {
+        e.count = 1; e.offset = dataAt;
+        for (const [n, d] of e.rats) { for (const v of [n, d]) data.push(v & 255, (v >>> 8) & 255, (v >>> 16) & 255, v >>> 24); dataAt += 8; }
+      } else e.count = 1;
+    };
+    e0.forEach(place); e1.forEach(place);
+    e0.find((e) => e.tag === 0x8769).value = at1;
+    const writeIfd = (es) => {
+      u16(es.length);
+      for (const e of es) {
+        u16(e.tag); u16(e.type); u32(e.count);
+        if (e.inline) { const b = e.inline.concat([0, 0, 0, 0]).slice(0, 4); bytes.push(...b); }
+        else if (e.offset != null) u32(e.offset);
+        else if (e.type === 3) { u16(e.value); u16(0); }
+        else u32(e.value);
+      }
+      u32(0);
+    };
+    bytes.push(0x49, 0x49, 42, 0); u32(8);
+    writeIfd(e0); writeIfd(e1);
+    return Uint8Array.from([0x45, 0x78, 0x69, 0x66, 0, 0, ...bytes, ...data]);
+  }
+
   // Convenience: EXIF from `source` JPEG bytes into `target` JPEG bytes.
   function copyExif(source, target, size) {
     const app1 = extractApp1(source);
     return app1 ? insertApp1(target, patchApp1(app1, size)) : target;
   }
 
-  return { extractApp1, patchApp1, insertApp1, copyExif, captureTime };
+  return { extractApp1, patchApp1, insertApp1, copyExif, captureTime, buildApp1 };
 }
 
 if (typeof module === 'object' && module.exports) module.exports = createExif();

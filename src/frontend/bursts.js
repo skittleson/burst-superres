@@ -8,7 +8,7 @@
  */
 function createBursts() {
   'use strict';
-  const NAME = /^(.*?)(?:_(\d{1,3}))?\.(jpe?g|png)$/i;
+  const NAME = /^(.*?)(?:_(\d{1,3}))?\.(jpe?g|png|arw)$/i;
   const base = (p) => p.split(/[\\/]/).pop();
 
   // files: [{ path, time }] (time in seconds or null). Returns [{ name, paths }].

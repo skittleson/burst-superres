@@ -6,7 +6,7 @@
 - [x] Deblur after merge: strip-wise Richardson–Lucy, detail-adaptive (Wiener-style blend), measured on every bench run; tests
 - [x] RAW decoder: TIFF/ARW parse, Sony ARW2 decompression + tone curve, SR2 decrypt (WB, black, color matrix), crop, orientation; verified against LibRaw (rawpy)
 - [x] RAW render: Malvar–He–Cutler demosaic, WB, camera matrix, sRGB; compare with LibRaw's render
-- [ ] RAW in the app: .ARW load/thumbnail (embedded preview), capture time for burst grouping, worker decode
+- [x] RAW in the app: .ARW load/thumbnail (embedded preview), capture time for burst grouping, worker decode
 - [x] Measure RAW vs camera-JPEG in a simulated burst (mosaic + noise; JPEG path = demosaic + in-camera sharpen + JPEG)
 - [ ] UI: deblur control, RAW labels; README with measured numbers; screenshots; release v0.3.0
 

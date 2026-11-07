@@ -14,7 +14,7 @@
 <main>
   <section class="panel inputs">
     <div id="drop" class="drop">
-      <p><strong>Drop photos or a folder</strong> <span class="muted">· 2–8 JPEG or PNG of one scene</span></p>
+      <p><strong>Drop photos or a folder</strong> <span class="muted">· 2–8 JPEG, PNG or Sony ARW of one scene</span></p>
       <div class="drop-buttons">
         <button id="pick">Choose photos…</button>
         <button id="pickFolder">Choose folder…</button>
@@ -37,6 +37,15 @@
       </select>
     </label>
     <label class="check"><input type="checkbox" id="compareMethods"> Also make the other method, to compare</label>
+    <label class="field">Sharpen after merging
+      <select id="sharpen" title="Deconvolution after the merge. Auto picks the amount that best predicts a photo left out of the merge.">
+        <option value="off">Off (default for camera JPEGs)</option>
+        <option value="auto">Auto, from the photos (default for RAW)</option>
+        <option value="0.25">Gentle</option>
+        <option value="0.5">Medium</option>
+        <option value="1">Strong</option>
+      </select>
+    </label>
 
     <div class="buttons">
       <button id="merge" class="primary" disabled>Merge</button>
@@ -52,7 +61,8 @@
       <summary>What to expect</summary>
       <p>The output is exactly twice the width and height of your photos. Merging cuts
         noise and cleans up fine detail a little. It does not give you four times the
-        detail. In our tests the gain over upscaling one photo was about 0.7–1.3&nbsp;dB PSNR.</p>
+        detail. In our tests the gain over upscaling one JPEG was about 0.7–1.3&nbsp;dB PSNR;
+        RAW files of the same burst measured 1–3&nbsp;dB better than their JPEGs.</p>
       <p>The scene must hold still. Shifts, slight rotation and handheld wobble are
         corrected; places where something moved are left out of the merge for that photo.
         Camera-shake blur inside a photo is not fixed.</p>
@@ -117,6 +127,7 @@
 
 <script src="sr-core.js"></script>
 <script src="exif.js"></script>
+<script src="raw.js"></script>
 <script src="bursts.js"></script>
 <script src="app.js"></script>
 </body>

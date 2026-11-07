@@ -10,7 +10,8 @@ window.tiny = (() => {
       call: async (method, params = {}) => {
         if (method === 'selftestConfig') return config && { quit: false, ...config };
         if (method === 'listImages') return (await fetch('/list?paths=' + encodeURIComponent(JSON.stringify(params.paths)))).json();
-        if (method === 'readHead') return (await fetch('/head?p=' + encodeURIComponent(params.path))).text();
+        if (method === 'readHead') return (await fetch('/head?p=' + encodeURIComponent(params.path) + '&n=' + (params.bytes || 70000))).text();
+        if (method === 'readRange') return (await fetch('/head?p=' + encodeURIComponent(params.path) + '&o=' + params.offset + '&n=' + params.length)).text();
         if (method === 'saveBegin') return 1;
         if (method === 'saveEnd') return 0;
         return true;

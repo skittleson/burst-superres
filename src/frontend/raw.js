@@ -353,12 +353,20 @@ function createRaw() {
 
   const isRawName = (p) => /\.arw$/i.test(p);
 
-  /** Make, model, orientation, capture time and preview location from the first ~200 KB. */
+  /** Make, model, exposure, lens, orientation, capture time and preview location from the first ~200 KB. */
   function headerInfo(bytes) {
     const R = reader(bytes), ifd0 = R.ifd(R.first());
     const out = { make: ifd0.tags.has(0x010f) ? ifd0.tags.get(0x010f).ascii() : '', orientation: v1(ifd0, 0x0112, 1) };
     if (ifd0.tags.has(0x0201)) out.preview = { offset: v1(ifd0, 0x0201), length: v1(ifd0, 0x0202) };
-    if (ifd0.tags.has(0x8769)) { const ex = R.ifd(v1(ifd0, 0x8769)); if (ex.tags.has(0x9003)) out.dateTimeOriginal = ex.tags.get(0x9003).ascii(); }
+    out.model = ifd0.tags.has(0x0110) ? ifd0.tags.get(0x0110).ascii() : '';
+    if (ifd0.tags.has(0x8769)) {
+      const ex = R.ifd(v1(ifd0, 0x8769));
+      const rat = (tag) => (ex.tags.has(tag) ? [R.u32(ex.tags.get(tag).at), R.u32(ex.tags.get(tag).at + 4)] : null);
+      if (ex.tags.has(0x9003)) out.dateTimeOriginal = ex.tags.get(0x9003).ascii();
+      out.exposureTime = rat(0x829a); out.fNumber = rat(0x829d); out.focalLength = rat(0x920a);
+      out.iso = v1(ex, 0x8827, null);
+      if (ex.tags.has(0xa434)) out.lensModel = ex.tags.get(0xa434).ascii();
+    }
     const m = out.dateTimeOriginal && out.dateTimeOriginal.match(/^(\d{4}):(\d\d):(\d\d) (\d\d):(\d\d):(\d\d)/);
     out.time = m ? Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]) / 1000 : null;
     return out;

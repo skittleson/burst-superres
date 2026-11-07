@@ -24,18 +24,19 @@ http.createServer((req, res) => {
     for (const p of JSON.parse(url.searchParams.get('paths') || '[]')) {
       try {
         if (fs.statSync(p).isDirectory()) {
-          for (const n of fs.readdirSync(p)) if (/\.(jpe?g|png)$/i.test(n)) out.push(path.join(p, n));
-        } else if (/\.(jpe?g|png)$/i.test(p)) out.push(p);
+          for (const n of fs.readdirSync(p)) if (/\.(jpe?g|png|arw)$/i.test(n)) out.push(path.join(p, n));
+        } else if (/\.(jpe?g|png|arw)$/i.test(p)) out.push(p);
       } catch { /* skip */ }
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify(out.sort()));
   }
-  if (url.pathname === '/head') {               // tiny.api 'readHead' stand-in
+  if (url.pathname === '/head') {               // tiny.api 'readHead' / 'readRange' stand-in
     const p = url.searchParams.get('p') || '';
-    if (!/\.(jpe?g|png)$/i.test(p)) { res.writeHead(403); return res.end(); }
+    if (!/\.(jpe?g|png|arw)$/i.test(p)) { res.writeHead(403); return res.end(); }
+    const off = +(url.searchParams.get('o') || 0), len = Math.min(8 << 20, +(url.searchParams.get('n') || 70000));
     try {
-      const fd = fs.openSync(p, 'r'), buf = Buffer.alloc(70000), n = fs.readSync(fd, buf, 0, 70000, 0);
+      const fd = fs.openSync(p, 'r'), buf = Buffer.alloc(len), n = fs.readSync(fd, buf, 0, len, off);
       fs.closeSync(fd);
       res.writeHead(200, { 'Content-Type': 'text/plain' });
       return res.end(buf.subarray(0, n).toString('base64'));
@@ -43,7 +44,7 @@ http.createServer((req, res) => {
   }
   if (url.pathname === '/file') {
     file = url.searchParams.get('p') || '';
-    if (!/\.(jpe?g|png)$/i.test(file)) { res.writeHead(403); return res.end(); }
+    if (!/\.(jpe?g|png|arw)$/i.test(file)) { res.writeHead(403); return res.end(); }
   } else if (url.pathname === '/tiny-shim.js') {
     file = path.join(__dirname, 'tiny-shim.js');
   } else {

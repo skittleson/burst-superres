@@ -72,3 +72,11 @@ test('captureTime reads DateTimeOriginal from a real-shaped block', () => {
   assert.equal(EXIF.captureTime(Uint8Array.from(b)), Date.UTC(2023, 11, 28, 12, 25, 26) / 1000);
   assert.equal(EXIF.captureTime(null), null);
 });
+
+test('buildApp1 writes fields that a reader can parse back', () => {
+  const app1 = EXIF.buildApp1({ make: 'SONY', model: 'ILCE-6000', dateTimeOriginal: '2023:03:20 23:30:49', exposureTime: [1, 60], fNumber: [35, 10], iso: 3200, focalLength: [160, 10], lensModel: 'E PZ 16-50mm F3.5-5.6 OSS', width: 12048, height: 8048 });
+  assert.equal(EXIF.captureTime(app1), Date.UTC(2023, 2, 20, 23, 30, 49) / 1000);
+  // a JPEG with it inserted round-trips through extractApp1 unchanged
+  const jpeg = EXIF.insertApp1(Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]), app1);
+  assert.deepEqual(EXIF.extractApp1(jpeg), app1);
+});

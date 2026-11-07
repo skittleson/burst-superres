@@ -1,4 +1,4 @@
-/* global createSRCore, createExif, createBursts, tiny */
+/* global createSRCore, createExif, createBursts, createRaw, tiny */
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -6,11 +6,13 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const SR = createSRCore();
 const EXIF = createExif();
 const BURSTS = createBursts();
+const RAWF = createRaw();
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 const GUIDE_URL = 'https://dctmlab.taila665d5.ts.net/';
 const SITE_URL = 'https://docodethatmatters.com/';
-const IMAGE_EXT = /\.(jpe?g|png)$/i;
+const IMAGE_EXT = /\.(jpe?g|png|arw)$/i;
+const RAW_DIRECT_MIN = 4;          // raw bursts this size or larger merge straight from the sensor samples
 const MAX_PHOTOS = 8;
 const MAX_OUTPUT_PIXELS = 268e6;   // WebKit/Chromium canvas area limit
 const CHUNK = 3 * 1024 * 1024;     // bytes per bridge message when saving
@@ -30,11 +32,11 @@ const state = {
 
 // ---------- worker: all pixel work happens here ----------
 
-// Runs inside the worker; SR is createSRCore() instantiated there. It keeps
-// the decoded frames and their alignment, so ticking photos or changing the
-// method only re-merges.
-function workerMain(SR) {
-  let frames = null, reg = null;
+// Runs inside the worker; SR is createSRCore() and RAW is createRaw(),
+// instantiated there. It keeps the decoded photos and their alignment, so
+// ticking photos or changing the method only re-merges.
+function workerMain(SR, RAW) {
+  let frames = null, raws = null, reg = null, orientation = 1, exposure = 1, refOriented = null, finish = null;
   const step = (phase) => (p, label) => postMessage({ type: 'progress', phase, p, label });
   const summary = (d, i, w, h) => {
     const W = d.warp, F = W.field, cx = (w - 1) / 2, cy = (h - 1) / 2;
@@ -45,28 +47,62 @@ function workerMain(SR) {
       move = Math.max(move, Math.hypot(a - x, b - y));
     }
     return { dx: u - cx, dy: v - cy, rot: Math.atan2(W.d, W.a) * 180 / Math.PI, move,
-      err: d.err, verdict: d.verdict, mode: d.mode, badFraction: d.badFraction, fitRms: d.fitRms || 0 };
+      err: d.err, verdict: d.verdict, mode: d.mode, badFraction: d.badFraction, fitRms: d.fitRms || 0, gain: d.gain };
   };
+  const oriented = (img) => (orientation === 1 ? img : RAW.orient(img, orientation));
   self.onmessage = (e) => {
     const msg = e.data;
     try {
       if (msg.type === 'align') {
-        frames = msg.frames.map((f) => ({ width: f.width, height: f.height, data: new Uint8ClampedArray(f.buffer) }));
+        raws = null; orientation = 1; exposure = 1; finish = null;
+        if (msg.frames[0].kind === 'raw') {
+          raws = []; frames = [];
+          msg.frames.forEach((f, i) => {
+            step('decode')(i / msg.frames.length, `Decoding raw photo ${i + 1} of ${msg.frames.length}`);
+            const bytes = new Uint8Array(f.buffer), info = RAW.parse(bytes), raw = RAW.decode(bytes, info);
+            if (i === 0) { exposure = RAW.autoExposure(raw, info, f.targetMean || 110); orientation = info.orientation; finish = RAW.finisher(info, exposure); }
+            raws.push({ raw, info, levels: RAW.levels(info) });
+            frames.push(RAW.render(raw, info, { exposure, orient: false }));
+          });
+        } else {
+          frames = msg.frames.map((f) => ({ width: f.width, height: f.height, data: new Uint8ClampedArray(f.buffer) }));
+        }
         reg = SR.registerBurst(frames, step('align'));
+        refOriented = oriented(frames[reg.refIndex]);
         const { width: w, height: h } = frames[0];
-        postMessage({ type: 'aligned', refIndex: reg.refIndex, details: reg.details.map((d, i) => summary(d, i, w, h)) });
+        postMessage({ type: 'aligned', refIndex: reg.refIndex, raw: !!raws, exposure, details: reg.details.map((d, i) => summary(d, i, w, h)) });
       } else if (msg.type === 'merge') {
         const idx = msg.selection.map((on, i) => (on || i === reg.refIndex ? i : -1)).filter((i) => i >= 0);
-        const outs = SR.merge(idx.map((i) => frames[i]), idx.map((i) => reg.warps[i]),
-          { modes: msg.modes, refIndex: idx.indexOf(reg.refIndex), onProgress: step('merge') });
+        const refK = idx.indexOf(reg.refIndex);
+        const direct = !!raws && idx.length >= msg.rawDirectMin;
+        const cfa = (k) => ({ width: raws[k].info.width, height: raws[k].info.height, stride: raws[k].info.rawWidth, data: raws[k].raw,
+          cfa: raws[k].info.cfa, black: raws[k].levels.black, gain: raws[k].levels.gain });
+        // brightness gains were measured on sRGB renders; in linear light they are about g^2.2
+        const wl = (k) => ({ ...reg.warps[k], gainLinear: (reg.warps[k].gain || [1, 1, 1]).map((g) => Math.pow(g, 2.2)) });
+        const mergeDirect = (keep, region) => SR.mergeCFA(keep.map(cfa), keep.map(wl), { region, refIndex: keep.indexOf(reg.refIndex), toRGBA: finish, onProgress: region ? undefined : step('merge') });
+        const outs = {};
+        const rest = msg.modes.filter((m) => !(direct && m === 'mean'));
+        if (direct && msg.modes.includes('mean')) outs.mean = mergeDirect(idx);
+        if (rest.length) Object.assign(outs, SR.merge(idx.map((i) => frames[i]), idx.map((i) => reg.warps[i]),
+          { modes: rest, refIndex: refK, onProgress: step('merge') }));
+        // sharpening after the merge (deblur): fixed amount, or chosen from the burst itself
+        let amount = typeof msg.sharpen === 'number' ? msg.sharpen : 0, picked = null;
+        if (msg.sharpen === 'auto') {
+          step('sharpen')(0, 'Choosing the sharpening');
+          const pick = SR.chooseDeblur(idx.map((i) => frames[i]), idx.map((i) => reg.warps[i]), idx.map((i) => reg.details[i]), refK,
+            direct ? { mergeRegion: (keep, R) => mergeDirect(keep.map((k) => idx[k]), R) } : {});
+          amount = pick.amount; picked = pick;
+        }
         postMessage({ type: 'progress', phase: 'merge', p: 1, label: 'Comparing with one photo' });
         for (const mode of msg.modes) {
-          const out = outs[mode], diff = SR.compareToSingle(out, frames[reg.refIndex]);
-          postMessage({ type: 'result', mode, width: out.width, height: out.height, diff, buffer: out.data.buffer }, [out.data.buffer]);
+          let out = oriented(outs[mode]);
+          if (amount > 0) out = SR.deblur(out, { amount, onProgress: step('sharpen') });
+          const diff = SR.compareToSingle(out, refOriented);
+          postMessage({ type: 'result', mode, width: out.width, height: out.height, diff, direct: direct && mode === 'mean', buffer: out.data.buffer }, [out.data.buffer]);
         }
-        postMessage({ type: 'merged', count: idx.length });
+        postMessage({ type: 'merged', count: idx.length, sharpen: amount, auto: msg.sharpen === 'auto', pickNote: picked && picked.reason });
       } else if (msg.type === 'before' && reg) {
-        const r = SR.resampleRegion(frames[reg.refIndex], { scale: 2, x: msg.x, y: msg.y, width: msg.width, height: msg.height });
+        const r = SR.resampleRegion(refOriented, { scale: 2, x: msg.x, y: msg.y, width: msg.width, height: msg.height });
         postMessage({ type: 'before', id: msg.id, width: r.width, height: r.height, buffer: r.data.buffer }, [r.data.buffer]);
       }
     } catch (err) {
@@ -77,7 +113,7 @@ function workerMain(SR) {
 
 // Built from function source: Chromium (WebView2) refuses file:// workers.
 const WORKER_URL = URL.createObjectURL(new Blob(
-  [`const SR = (${createSRCore.toString()})();\n(${workerMain.toString()})(SR);`],
+  [`const SR = (${createSRCore.toString()})();\nconst RAW = (${createRaw.toString()})();\n(${workerMain.toString()})(SR, RAW);`],
   { type: 'text/javascript' }));
 let worker = null, onWorker = () => {};
 function startWorker() {
@@ -101,24 +137,57 @@ function loadImage(path) {
 const fileName = (p) => p.split(/[\\/]/).pop();
 const photoKey = () => state.photos.map((p) => p.path).join('\n');
 
+const b64bytes = (b64) => (Uint8Array.fromBase64 ? Uint8Array.fromBase64(b64) : fromBase64(b64));
+
+// Thumbnail data URL and mean luma (0..255) of an image element.
+function thumbOf(img) {
+  const c = document.createElement('canvas');
+  c.width = 100; c.height = Math.max(1, Math.round(100 * img.naturalHeight / img.naturalWidth));
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.drawImage(img, 0, 0, c.width, c.height);
+  const d = g.getImageData(0, 0, c.width, c.height).data;
+  let s = 0;
+  for (let i = 0; i < d.length; i += 4) s += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+  return { thumb: c.toDataURL('image/jpeg', 0.8), mean: s / (d.length / 4) };
+}
+
+// An ARW: size and metadata from the header, thumbnail from the embedded preview.
+async function rawEntry(path) {
+  const head = b64bytes(await tiny.api.call('readHead', { path, bytes: 200000 }));
+  const info = RAWF.parse(head), meta = RAWF.headerInfo(head);
+  const turned = info.orientation === 6 || info.orientation === 8;
+  const entry = { path, name: fileName(path), raw: true, meta, width: turned ? info.height : info.width, height: turned ? info.width : info.height };
+  if (meta.preview) {
+    const jpg = b64bytes(await tiny.api.call('readRange', { path, offset: meta.preview.offset, length: meta.preview.length }));
+    const url = URL.createObjectURL(new Blob([jpg], { type: 'image/jpeg' }));
+    try {
+      const img = new Image(); img.src = url; await img.decode();
+      Object.assign(entry, thumbOf(img));
+    } finally { URL.revokeObjectURL(url); }
+  }
+  return entry;
+}
+
 async function addPaths(paths) {
   const fresh = paths.filter((p) => IMAGE_EXT.test(p) && !state.photos.some((x) => x.path === p));
-  if (paths.length && !fresh.length) setStatus('Those photos are already in the list, or are not JPEG/PNG.', true);
+  if (paths.length && !fresh.length) setStatus('Those photos are already in the list, or are not JPEG, PNG or Sony ARW.', true);
   let skipped = 0;
   for (const path of fresh) {
     if (state.photos.length >= MAX_PHOTOS) { skipped++; continue; }
     try {
-      const img = await loadImage(path);
-      const c = document.createElement('canvas');
-      c.width = 100; c.height = Math.round(100 * img.naturalHeight / img.naturalWidth);
-      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-      state.photos.push({ path, name: fileName(path), width: img.naturalWidth, height: img.naturalHeight,
-        thumb: c.toDataURL('image/jpeg', 0.8), include: true, detail: null });
-      img.src = '';
+      if (RAWF.isRawName(path)) {
+        state.photos.push({ ...(await rawEntry(path)), include: true, detail: null });
+      } else {
+        const img = await loadImage(path);
+        state.photos.push({ path, name: fileName(path), width: img.naturalWidth, height: img.naturalHeight,
+          ...thumbOf(img), include: true, detail: null });
+        img.src = '';
+      }
     } catch (e) {
-      setStatus(`Could not read ${fileName(path)}.`, true);
+      setStatus(`Could not read ${fileName(path)}: ${(e && e.message) || e}`, true);
     }
   }
+  if (state.photos.length) applySharpenDefault();
   if (skipped) setStatus(`Up to ${MAX_PHOTOS} photos. ${skipped} more were not added.`);
   photosChanged();
 }
@@ -127,16 +196,17 @@ async function addPaths(paths) {
 // several bursts, let the user pick one.
 async function addDropped(paths) {
   const files = await tiny.api.call('listImages', { paths });
-  if (!files.length) return setStatus('No JPEG or PNG photos there.', true);
+  if (!files.length) return setStatus('No JPEG, PNG or Sony ARW photos there.', true);
   if (files.length <= MAX_PHOTOS && !paths.some((p) => !IMAGE_EXT.test(p))) return addPaths(files);
   setStatus(`Reading ${files.length} photos to find the bursts…`);
   const withTimes = [];
   for (const path of files) {
     let time = null;
-    if (/\.jpe?g$/i.test(path) && files.length <= 400) {
-      try { time = EXIF.captureTime(EXIF.extractApp1(Uint8Array.fromBase64
-        ? Uint8Array.fromBase64(await tiny.api.call('readHead', { path }))
-        : fromBase64(await tiny.api.call('readHead', { path })))); } catch { /* no EXIF */ }
+    if (files.length <= 400) {
+      try {
+        if (/\.jpe?g$/i.test(path)) time = EXIF.captureTime(EXIF.extractApp1(b64bytes(await tiny.api.call('readHead', { path }))));
+        else if (RAWF.isRawName(path)) time = RAWF.headerInfo(b64bytes(await tiny.api.call('readHead', { path, bytes: 4096 }))).time;
+      } catch { /* no EXIF */ }
     }
     withTimes.push({ path, time });
   }
@@ -195,7 +265,7 @@ function renderList() {
         title="${isRef ? 'The reference is always used' : 'Use this photo in the merge'}" aria-label="Use ${esc(p.name)}">
       <img src="${p.thumb}" alt="">
       <div><div class="name" title="${esc(p.path)}">${esc(p.name)}</div>
-        <div class="meta${isRef ? ' ref' : ''}">${p.width} × ${p.height}</div></div>
+        <div class="meta${isRef ? ' ref' : ''}">${p.width} × ${p.height}${p.raw ? ' · RAW' : ''}</div></div>
       ${badgeFor(p, i)}
       <button class="remove" data-rm="${i}" title="Remove" ${state.busy ? 'disabled' : ''}>×</button>
     </li>`;
@@ -208,7 +278,7 @@ function renderList() {
     : '';
   $('merge').disabled = state.busy || state.photos.length < 2;
   $('merge').textContent = state.results ? 'Merge again' : 'Merge';
-  for (const id of ['pick', 'pickFolder', 'mode', 'compareMethods']) $(id).disabled = state.busy;
+  for (const id of ['pick', 'pickFolder', 'mode', 'compareMethods', 'sharpen']) $(id).disabled = state.busy;
 }
 
 $('list').addEventListener('click', (e) => {
@@ -221,7 +291,7 @@ $('list').addEventListener('click', (e) => {
 
 async function pickPhotos() {
   if (state.busy) return;
-  const paths = await tiny.dialog.openFiles({ types: ['jpg', 'jpeg', 'JPG', 'JPEG', 'png', 'PNG'] });
+  const paths = await tiny.dialog.openFiles({ types: ['jpg', 'jpeg', 'JPG', 'JPEG', 'png', 'PNG', 'arw', 'ARW'] });
   if (paths) await addDropped(paths);
 }
 async function pickFolder() {
@@ -280,10 +350,15 @@ async function decodeAll() {
   const g = c.getContext('2d', { willReadFrequently: true });
   for (let i = 0; i < state.photos.length; i++) {
     setStatus(`Reading photo ${i + 1} of ${state.photos.length}…`);
+    if (state.photos[i].raw) {
+      frames.push({ kind: 'raw', buffer: await readBytes(state.photos[i].path), targetMean: state.photos[0].mean });
+      await onStage('read ' + i);
+      continue;
+    }
     const img = await loadImage(state.photos[i].path);
     c.width = img.naturalWidth; c.height = img.naturalHeight;
     g.drawImage(img, 0, 0);
-    frames.push({ width: c.width, height: c.height, buffer: g.getImageData(0, 0, c.width, c.height).data.buffer });
+    frames.push({ kind: 'rgba', width: c.width, height: c.height, buffer: g.getImageData(0, 0, c.width, c.height).data.buffer });
     img.src = '';
     await onStage('decoded ' + i);
   }
@@ -291,11 +366,34 @@ async function decodeAll() {
   return frames;
 }
 
+// Whole file as an ArrayBuffer. XHR, because fetch() of file:// URLs reports
+// status 0 / not ok in WebKitGTK even when it returns the bytes.
+function readBytes(path) {
+  return new Promise((ok, bad) => {
+    const x = new XMLHttpRequest();
+    x.open('GET', tiny.fileURL(path));
+    x.responseType = 'arraybuffer';
+    x.onload = () => (x.response && x.response.byteLength ? ok(x.response) : bad(new Error('empty read')));
+    x.onerror = () => bad(new Error('could not read ' + fileName(path)));
+    x.send();
+  });
+}
+
+// Sharpening after the merge: RAW photos default to Auto (measured to help or
+// stay neutral), camera JPEGs to Off (they are sharpened in camera; Auto and
+// strong settings measured worse on simulated sharpened JPEGs).
+let sharpenTouched = false;
+function applySharpenDefault() {
+  if (sharpenTouched || !state.photos.length) return;
+  $('sharpen').value = state.photos.every((p) => p.raw) ? 'auto' : 'off';
+}
+const sharpenWanted = () => { const v = $('sharpen').value; return v === 'off' ? 0 : v === 'auto' ? 'auto' : +v; };
+
 const modesWanted = () => {
   const main = $('mode').value;
   return $('compareMethods').checked ? [main, main === 'median' ? 'mean' : 'median'] : [main];
 };
-const mergeKey = () => photoKey() + '|' + state.photos.map((p) => +p.include).join('') + '|' + modesWanted().join(',');
+const mergeKey = () => photoKey() + '|' + state.photos.map((p) => +p.include).join('') + '|' + modesWanted().join(',') + '|' + $('sharpen').value;
 
 function summaryText(details, refIndex) {
   let move = 0, worst = 0;
@@ -327,6 +425,7 @@ async function runMerge() {
   if (state.busy || state.photos.length < 2) return;
   const { width: w, height: h } = state.photos[0];
   if (state.photos.some((p) => p.width !== w || p.height !== h)) return fail('All photos must be the same size.');
+  if (state.photos.some((p) => !!p.raw !== !!state.photos[0].raw)) return fail('Use either RAW files or JPEG/PNG files in one merge, not both.');
   if (4 * w * h > MAX_OUTPUT_PIXELS) return fail(`Photos up to ${Math.floor(MAX_OUTPUT_PIXELS / 4e6)} MP are supported (the 2× result must fit in one canvas).`);
 
   setBusy(true);
@@ -338,14 +437,16 @@ async function runMerge() {
 
   onWorker = (msg) => {
     if (msg.type === 'progress') {
-      const p = msg.phase === 'align' ? msg.p * 0.4 : (needAlign ? 0.4 : 0) + msg.p * (needAlign ? 0.6 : 1);
+      const span = { decode: [0, 0.15], align: [0.15, 0.45], merge: [0.45, 0.85], sharpen: [0.85, 1] }[msg.phase] || [0, 1];
+      const lo = needAlign ? span[0] : Math.max(0, (span[0] - 0.45) / 0.55), hi = needAlign ? span[1] : Math.max(0, (span[1] - 0.45) / 0.55);
+      const p = lo + msg.p * (hi - lo);
       if (msg.phase !== phase.name) { phase.name = msg.phase; phase.t0 = performance.now(); }
       phase.p = msg.p;
       setProgress(p);
       setStatus(msg.label + '…' + etaText(phase));
       onStage(msg.label + ' ' + msg.p.toFixed(2));
     } else if (msg.type === 'aligned') {
-      state.aligned = { key: photoKey(), refIndex: msg.refIndex };
+      state.aligned = { key: photoKey(), refIndex: msg.refIndex, raw: msg.raw, exposure: msg.exposure };
       const sel = SR.defaultSelection(msg.details, msg.refIndex, GOOD_PX);
       msg.details.forEach((d, i) => { state.photos[i].detail = d; state.photos[i].include = sel[i]; });
       $('summary').textContent = summaryText(msg.details, msg.refIndex);
@@ -359,6 +460,7 @@ async function runMerge() {
     } else if (msg.type === 'result') {
       pending[msg.mode] = msg;
     } else if (msg.type === 'merged') {
+      state.mergeInfo = { sharpen: msg.sharpen, auto: msg.auto, direct: Object.values(pending).some((m) => m.direct) };
       showResults(pending, w, h, msg.count);
       setBusy(false); setProgress(null);
       const secs = (performance.now() - started) / 1000;
@@ -372,7 +474,7 @@ async function runMerge() {
   let pending = {};
   const requestMerge = () => {
     pending = {};
-    worker.postMessage({ type: 'merge', selection: state.photos.map((p) => p.include), modes: modesWanted() });
+    worker.postMessage({ type: 'merge', selection: state.photos.map((p) => p.include), modes: modesWanted(), sharpen: sharpenWanted(), rawDirectMin: RAW_DIRECT_MIN });
   };
 
   if (!needAlign) return requestMerge();
@@ -408,7 +510,10 @@ function showResults(msgs, inputW, inputH, count) {
 
   const ov = $('overview'), s = Math.min(440 / main.width, 300 / main.height);
   ov.width = Math.round(main.width * s); ov.height = Math.round(main.height * s);
-  $('dims').textContent = `${main.width} × ${main.height} px, from ${count} photos of ${inputW} × ${inputH}`;
+  const mi = state.mergeInfo || {};
+  const how = [state.aligned.raw ? (mi.direct && mainMode === 'mean' ? 'RAW, merged from the sensor samples' : 'RAW, demosaiced then merged') : null,
+    mi.sharpen > 0 ? `sharpened ${mi.sharpen}${mi.auto ? ' (auto)' : ''}` : mi.auto ? 'no sharpening needed (auto)' : null].filter(Boolean).join(' · ');
+  $('dims').textContent = `${main.width} × ${main.height} px, from ${count} photos of ${inputW} × ${inputH}` + (how ? ` · ${how}` : '');
   $('diff').textContent = `${MODE_LABEL[mainMode]} vs one photo upscaled 2×: ${main.diff.meanAbs.toFixed(1)} levels different on average (of 255); ` +
     `${main.diff.pctOver.toFixed(0)}% of pixels changed by more than ${main.diff.threshold} levels.`;
   $('compareWrap').hidden = state.results.modes.length < 2;
@@ -462,7 +567,7 @@ function renderCompare() {
     window.dispatchEvent(new CustomEvent('before-shown'));
   } else {
     $('before').getContext('2d').clearRect(0, 0, c.w, c.h);
-    $('tagBefore').textContent = 'Before: one photo, Lanczos 2×';
+    $('tagBefore').textContent = state.aligned && state.aligned.raw ? 'Before: one RAW photo, demosaiced, Lanczos 2×' : 'Before: one photo, Lanczos 2×';
     worker.postMessage({ type: 'before', id: ++state.beforeReq, x: c.x, y: c.y, width: c.w, height: c.h });
   }
   $('tagAfter').style.left = isSide() ? `${c.w * c.css + 16}px` : '';
@@ -555,6 +660,9 @@ async function writeFile(path, bytes) {
 // EXIF (camera, lens, date, exposure) from the reference photo, for JPEG output.
 async function withExif(bytes) {
   const ref = state.photos[state.results.refIndex];
+  if (ref && ref.raw && ref.meta) {
+    return EXIF.insertApp1(bytes, EXIF.buildApp1({ ...ref.meta, software: `Burst Super-Res ${VERSION}`, width: state.results.width, height: state.results.height }));
+  }
   if (!ref || !/\.jpe?g$/i.test(ref.path)) return bytes;
   try {
     const b64 = await tiny.api.call('readHead', { path: ref.path });
@@ -599,6 +707,7 @@ $('remerge').addEventListener('click', runMerge);
 $('cancel').addEventListener('click', cancelMerge);
 $('mode').addEventListener('change', () => { renderList(); updateStale(); });
 $('compareMethods').addEventListener('change', updateStale);
+$('sharpen').addEventListener('change', () => { sharpenTouched = true; updateStale(); });
 $('saveJpg').addEventListener('click', () => save('jpg'));
 $('savePng').addEventListener('click', () => save('png'));
 document.querySelectorAll('a[data-url]').forEach((a) => a.addEventListener('click', (e) => {
@@ -662,6 +771,8 @@ tiny.api.call('selftestConfig').then(async (cfg) => {
     if (cfg.stopAfterAdd) { report.ok = true; report.bursts = $('burstsTitle').textContent; throw null; }
     $('mode').value = cfg.mode || 'mean';
     $('compareMethods').checked = !!cfg.compare;
+    if (cfg.sharpen != null) { $('sharpen').value = String(cfg.sharpen); sharpenTouched = true; }
+    report.sharpenSetting = $('sharpen').value;
     t = performance.now();
     let ended = when('merge-end');
     onStage = stage;
@@ -678,6 +789,8 @@ tiny.api.call('selftestConfig').then(async (cfg) => {
     report.mergeMs = Math.round(performance.now() - t);
     report.status = $('status').textContent;
     report.dims = $('dims').textContent;
+    report.exposure = state.aligned && state.aligned.exposure;
+    report.added = state.photos.map((p) => `${p.name} ${p.width}x${p.height}${p.raw ? ' RAW' : ''}`);
     report.using = $('using').textContent;
     report.summary = $('summary').textContent;
     report.diff = $('diff').textContent;

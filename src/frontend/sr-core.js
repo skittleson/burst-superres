@@ -768,12 +768,12 @@ function createSRCore() {
   // frames: [{ width, height, data (one value per pixel), cfa, stride?, black?, gain? }]
   //   value used = (data[y * stride + x] - black[(y&1)*2 + (x&1)]) * gain[colour]
   // warps: from registerBurst on demosaiced versions of the same photos.
-  // opts: { scale = 2, refIndex = 0, sigma = 0.55 (input px), region, onProgress,
+  // opts: { scale = 2, refIndex = 0, sigma = 0.22 (input px; tuned on tools/bench-raw.js), region, onProgress,
   //         toRGBA(r, g, b, out, o) to turn merged values into 8-bit (default: clamp) }
 
   function mergeCFA(frames, warps, opts = {}) {
     const scale = opts.scale || 2, refIndex = opts.refIndex || 0, onProgress = opts.onProgress || (() => {});
-    const sigma = opts.sigma || 0.55, inv = 1 / (2 * sigma * sigma);
+    const sigma = opts.sigma || 0.22, inv = 1 / (2 * sigma * sigma);
     const { width: w, height: h } = frames[0], N = frames.length;
     const R = opts.region || { x: 0, y: 0, width: w * scale, height: h * scale };
     const W = R.width, H = R.height, out = new Uint8ClampedArray(W * H * 4);
