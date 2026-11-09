@@ -520,24 +520,43 @@ function createSRCore() {
   // Registers every frame against a reference: the sharpest one unless
   // opts.refIndex is given (the benchmark pins it to keep ground truth aligned).
   // opts.matchBrightness (default true) also fits a per-photo, per-channel gain.
+  function pickReference(sharp) {
+    let refIndex = 0;
+    for (let i = 1; i < sharp.length; i++) if (sharp[i] > sharp[refIndex]) refIndex = i;
+    return refIndex;
+  }
+
+  // Everything registerFrame needs from the reference, built once per burst.
+  function prepareReference(ref) {
+    const refL = toLuma(ref);
+    return { ref, refL, refPyr: buildPyramid(refL), refMean: centralMean(refL) };
+  }
+
+  function referenceResult() {
+    return { warp: { ...IDENTITY }, rms: 0, fitRms: 0, inliers: 0, tiles: [], err: 0, mode: 'reference', badFraction: 0, verdict: 'good', gain: [1, 1, 1] };
+  }
+
+  // One frame against the prepared reference. Frames are independent of each
+  // other, so a burst can be spread over several workers.
+  function registerFrame(prep, f, opts = {}) {
+    const { ref, refL, refPyr, refMean } = prep, match = opts.matchBrightness !== false;
+    if (f.width !== ref.width || f.height !== ref.height) throw new Error('All photos must have the same dimensions.');
+    let fL = toLuma(f);
+    if (match) fL = scaleLuma(fL, refMean / Math.max(1e-3, centralMean(fL)));   // rough gain, for alignment only
+    const r = finishRegistration(refL, fL, registerLuma(refL, fL, refPyr), opts);
+    r.gain = match ? channelGains(ref, f, r.warp) : [1, 1, 1];
+    if (match) r.warp = { ...r.warp, gain: r.gain };
+    return r;
+  }
+
   function registerBurst(frames, onProgress = () => {}, opts = {}) {
     const n = frames.length;
     const sharp = frames.map((f, i) => { onProgress(i / n * 0.2, 'Measuring sharpness'); return sharpness(f); });
-    let refIndex = 0;
-    if (opts.refIndex != null) refIndex = opts.refIndex;
-    else for (let i = 1; i < n; i++) if (sharp[i] > sharp[refIndex]) refIndex = i;
-    const ref = frames[refIndex], match = opts.matchBrightness !== false;
-    const refL = toLuma(ref), refPyr = buildPyramid(refL), refMean = centralMean(refL);
+    const refIndex = opts.refIndex != null ? opts.refIndex : pickReference(sharp);
+    const prep = prepareReference(frames[refIndex]);
     const results = frames.map((f, i) => {
       onProgress(0.2 + i / n * 0.8, `Aligning photo ${i + 1} of ${n}`);
-      if (i === refIndex) return { warp: { ...IDENTITY }, rms: 0, fitRms: 0, inliers: 0, tiles: [], err: 0, mode: 'reference', badFraction: 0, verdict: 'good', gain: [1, 1, 1] };
-      if (f.width !== ref.width || f.height !== ref.height) throw new Error('All photos must have the same dimensions.');
-      let fL = toLuma(f);
-      if (match) fL = scaleLuma(fL, refMean / Math.max(1e-3, centralMean(fL)));   // rough gain, for alignment only
-      const r = finishRegistration(refL, fL, registerLuma(refL, fL, refPyr), opts);
-      r.gain = match ? channelGains(ref, f, r.warp) : [1, 1, 1];
-      if (match) r.warp = { ...r.warp, gain: r.gain };
-      return r;
+      return i === refIndex ? referenceResult() : registerFrame(prep, f, opts);
     });
     onProgress(1, 'Aligned');
     return { refIndex, warps: results.map((r) => r.warp), details: results, sharpness: sharp };
@@ -791,7 +810,7 @@ function createSRCore() {
         const g = [wg[0] * fg[0], wg[1] * fg[1], wg[2] * fg[2]];
         for (let c0 = 0; c0 < W; c0 += 128) {
           const cw = Math.min(128, W - c0);
-          const xc = (R.x + c0 + cw / 2 + 0.5) / scale - 0.5, yc = ((R.y + Y0 + R.y + Y1) / 2 + 0.5) / scale - 0.5;
+          const xc = (R.x + c0 + cw / 2 + 0.5) / scale - 0.5, yc = (R.y + (Y0 + Y1) / 2 + 0.5) / scale - 0.5;
           const L = F ? localAffineAt(warp, F, xc, yc) : warp;
           for (let Y = Y0; Y < Y1; Y++) {
             const y = (R.y + Y + 0.5) / scale - 0.5;
@@ -1066,7 +1085,7 @@ function createSRCore() {
 
   return {
     MODES, IDENTITY, translation, applyWarp, mapPoint, verdictFor, defaultSelection, toLuma, buildPyramid, sharpness,
-    register, registerBurst, lanczos3, resampleRegion, merge, mergeCFA, deblur, chooseDeblur, estimateNoise, compareToSingle, psnr, ssim, downsampleBox,
+    register, registerBurst, registerFrame, prepareReference, referenceResult, pickReference, lanczos3, resampleRegion, merge, mergeCFA, deblur, chooseDeblur, estimateNoise, compareToSingle, psnr, ssim, downsampleBox,
   };
 }
 

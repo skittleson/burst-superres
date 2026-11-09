@@ -1,5 +1,5 @@
 /* exif.js: carry the reference photo's EXIF (camera, lens, date, exposure)
- * into the saved JPEG. Byte-level, no dependencies. Page script and node
+ * into the saved JPEG or PNG (PNG: an eXIf chunk). Byte-level, no dependencies. Page script and node
  * module, like sr-core.js.
  *
  * Only values already in the block are edited in place, so no offsets move:
@@ -154,13 +154,51 @@ function createExif() {
     return Uint8Array.from([0x45, 0x78, 0x69, 0x66, 0, 0, ...bytes, ...data]);
   }
 
+  let crcTable = null;
+  function crc32(bytes) {
+    if (!crcTable) {
+      crcTable = new Uint32Array(256);
+      for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; crcTable[n] = c >>> 0; }
+    }
+    let c = 0xffffffff;
+    for (let i = 0; i < bytes.length; i++) c = crcTable[(c ^ bytes[i]) & 255] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  }
+
+  // New PNG bytes with an eXIf chunk (the TIFF part of an APP1 payload, i.e.
+  // without "Exif\0\0") right after IHDR, before any image data. Returns the
+  // input unchanged if it is not a PNG or already has an eXIf chunk.
+  function insertPngExif(png, payload) {
+    const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+    if (!payload || payload.length <= 6 || png.length < 33 || sig.some((v, i) => png[i] !== v)) return png;
+    const be32 = (o) => ((png[o] << 24) | (png[o + 1] << 16) | (png[o + 2] << 8) | png[o + 3]) >>> 0;
+    const tag = (o) => String.fromCharCode(png[o + 4], png[o + 5], png[o + 6], png[o + 7]);
+    for (let o = 8; o + 12 <= png.length; o += 12 + be32(o)) {
+      if (tag(o) === 'eXIf') return png;
+      if (tag(o) === 'IDAT') break;
+    }
+    const tiff = payload.subarray(6), ihdrEnd = 8 + 12 + be32(8);
+    const chunk = new Uint8Array(12 + tiff.length);
+    const n = tiff.length;
+    chunk[0] = n >>> 24; chunk[1] = (n >>> 16) & 255; chunk[2] = (n >>> 8) & 255; chunk[3] = n & 255;
+    chunk.set([0x65, 0x58, 0x49, 0x66], 4);                      // "eXIf"
+    chunk.set(tiff, 8);
+    const crc = crc32(chunk.subarray(4, 8 + n));
+    chunk[8 + n] = crc >>> 24; chunk[9 + n] = (crc >>> 16) & 255; chunk[10 + n] = (crc >>> 8) & 255; chunk[11 + n] = crc & 255;
+    const out = new Uint8Array(png.length + chunk.length);
+    out.set(png.subarray(0, ihdrEnd), 0);
+    out.set(chunk, ihdrEnd);
+    out.set(png.subarray(ihdrEnd), ihdrEnd + chunk.length);
+    return out;
+  }
+
   // Convenience: EXIF from `source` JPEG bytes into `target` JPEG bytes.
   function copyExif(source, target, size) {
     const app1 = extractApp1(source);
     return app1 ? insertApp1(target, patchApp1(app1, size)) : target;
   }
 
-  return { extractApp1, patchApp1, insertApp1, copyExif, captureTime, buildApp1 };
+  return { extractApp1, patchApp1, insertApp1, insertPngExif, crc32, copyExif, captureTime, buildApp1 };
 }
 
 if (typeof module === 'object' && module.exports) module.exports = createExif();

@@ -310,3 +310,36 @@ test('psnr/ssim of identical images', () => {
   assert.equal(SR.psnr(f, f), Infinity);
   assert.ok(Math.abs(SR.ssim(f, f) - 1) < 1e-6);
 });
+
+test('registerFrame per photo gives the same result as registerBurst', () => {
+  const G = waves(160, 120, 7), frames = [synthFrame(G, 0, 0), synthFrame(G, 1.3, -0.7, 0.4), synthFrame(G, -0.8, 1.1)].map((f) => ({ ...f }));
+  const whole = SR.registerBurst(frames);
+  const prep = SR.prepareReference(frames[whole.refIndex]);
+  const parts = frames.map((f, i) => (i === whole.refIndex ? SR.referenceResult() : SR.registerFrame(prep, f)));
+  assert.deepEqual(parts.map((r) => r.warp), whole.warps);
+  assert.deepEqual(parts, whole.details);
+  assert.equal(SR.pickReference(frames.map(SR.sharpness)), whole.refIndex);
+});
+
+test('merge and mergeCFA in bands of whole strips match a single pass (with a local field)', () => {
+  const w = 96, h = 160, scale = 2, W = w * scale, H = h * scale;
+  const G = waves(w, h, 3);
+  const nx = 4, ny = 6, T = 32, field = { x0: 0, y0: 0, T, nx, ny, ok: new Uint8Array(nx * ny).fill(1), dx: new Float32Array(nx * ny), dy: new Float32Array(nx * ny) };
+  for (let i = 0; i < nx * ny; i++) { field.dx[i] = 0.6 * Math.sin(i); field.dy[i] = 0.5 * Math.cos(i * 1.7); }
+  field.ok[5] = 0;
+  const warps = [SR.IDENTITY, { ...SR.translation(-0.3, 0.4), field }, { ...SR.translation(0.6, -0.2), gain: [1.02, 0.98, 1], field }];
+  const frames = [G, waves(w, h, 4), waves(w, h, 5)];
+  const bands = [[0, 64], [64, 192], [192, H]];                      // multiples of the 32-row strips
+  const whole = SR.merge(frames, warps, { modes: ['mean', 'median'] });
+  const parts = bands.map(([y, y1]) => SR.merge(frames, warps, { modes: ['mean', 'median'], region: { x: 0, y, width: W, height: y1 - y } }));
+  for (const m of ['mean', 'median']) {
+    const joined = new Uint8ClampedArray(W * H * 4);
+    parts.forEach((p, i) => joined.set(p[m].data, bands[i][0] * W * 4));
+    assert.deepEqual(joined, whole[m].data, m);
+  }
+  const cfa = [0, 1, 1, 2], raw = (s) => { const d = new Float32Array(w * h), r = rng(s); for (let i = 0; i < d.length; i++) d[i] = 200 * r(); return { width: w, height: h, data: d, cfa, black: [0, 0, 0, 0], gain: [1, 1, 1] }; };
+  const raws = [raw(1), raw(2), raw(3)], wholeCfa = SR.mergeCFA(raws, warps);
+  const joined = new Uint8ClampedArray(W * H * 4);
+  for (const [y, y1] of bands) joined.set(SR.mergeCFA(raws, warps, { region: { x: 0, y, width: W, height: y1 - y } }).data, y * W * 4);
+  assert.deepEqual(joined, wholeCfa.data);
+});

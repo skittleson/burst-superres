@@ -35,8 +35,45 @@ const state = {
 // Runs inside the worker; SR is createSRCore() and RAW is createRaw(),
 // instantiated there. It keeps the decoded photos and their alignment, so
 // ticking photos or changing the method only re-merges.
+//
+// With a pool of helper workers (MessagePorts the page hands over), alignment
+// runs one photo per helper and the merge runs one band of rows per helper;
+// without one, everything runs here.
 function workerMain(SR, RAW) {
   let frames = null, raws = null, reg = null, orientation = 1, exposure = 1, refOriented = null, finish = null;
+  let pool = [], sceneKey = null;
+  const makePool = (ports) => ports.map((port) => {
+    const h = { port, pending: new Map(), seq: 0 };
+    port.onmessage = (e) => {
+      const p = h.pending.get(e.data.id);
+      h.pending.delete(e.data.id);
+      if (p) (e.data.error ? p.bad(new Error(e.data.error)) : p.ok(e.data));
+    };
+    h.call = (msg, transfer) => new Promise((ok, bad) => { const id = ++h.seq; h.pending.set(id, { ok, bad }); port.postMessage({ ...msg, id }, transfer || []); });
+    return h;
+  });
+  // Every helper pulls the next task until none are left.
+  const runTasks = async (tasks, fn) => {
+    let next = 0;
+    await Promise.all(pool.map(async (h) => { while (next < tasks.length) await fn(h, tasks[next++]); }));
+  };
+  const plain = (f) => ({ width: f.width, height: f.height, data: f.data });
+  const alignPool = async (frames) => {
+    const n = frames.length, report = step('align');
+    const sharp = frames.map((f, i) => { report(i / n * 0.1, 'Measuring sharpness'); return SR.sharpness(f); });
+    const refIndex = SR.pickReference(sharp);
+    await Promise.all(pool.map((h) => h.call({ type: 'ref', frame: plain(frames[refIndex]) })));
+    const results = new Array(n);
+    results[refIndex] = SR.referenceResult();
+    const todo = frames.map((f, i) => i).filter((i) => i !== refIndex);
+    let done = 0;
+    await runTasks(todo, async (h, i) => {
+      results[i] = (await h.call({ type: 'align', frame: plain(frames[i]) })).result;
+      report(0.1 + (++done / todo.length) * 0.9, `Aligned ${done} of ${todo.length} photos`);
+    });
+    report(1, 'Aligned');
+    return { refIndex, warps: results.map((r) => r.warp), details: results, sharpness: sharp };
+  };
   const step = (phase) => (p, label) => postMessage({ type: 'progress', phase, p, label });
   const summary = (d, i, w, h) => {
     const W = d.warp, F = W.field, cx = (w - 1) / 2, cy = (h - 1) / 2;
@@ -50,10 +87,11 @@ function workerMain(SR, RAW) {
       err: d.err, verdict: d.verdict, mode: d.mode, badFraction: d.badFraction, fitRms: d.fitRms || 0, gain: d.gain };
   };
   const oriented = (img) => (orientation === 1 ? img : RAW.orient(img, orientation));
-  self.onmessage = (e) => {
+  self.onmessage = async (e) => {
     const msg = e.data;
     try {
       if (msg.type === 'align') {
+        pool = makePool(msg.ports || []); sceneKey = null;
         raws = null; orientation = 1; exposure = 1; finish = null;
         if (msg.frames[0].kind === 'raw') {
           raws = []; frames = [];
@@ -67,7 +105,7 @@ function workerMain(SR, RAW) {
         } else {
           frames = msg.frames.map((f) => ({ width: f.width, height: f.height, data: new Uint8ClampedArray(f.buffer) }));
         }
-        reg = SR.registerBurst(frames, step('align'));
+        reg = pool.length ? await alignPool(frames) : SR.registerBurst(frames, step('align'));
         refOriented = oriented(frames[reg.refIndex]);
         const { width: w, height: h } = frames[0];
         postMessage({ type: 'aligned', refIndex: reg.refIndex, raw: !!raws, exposure, details: reg.details.map((d, i) => summary(d, i, w, h)) });
@@ -82,9 +120,37 @@ function workerMain(SR, RAW) {
         const mergeDirect = (keep, region) => SR.mergeCFA(keep.map(cfa), keep.map(wl), { region, refIndex: keep.indexOf(reg.refIndex), toRGBA: finish, onProgress: region ? undefined : step('merge') });
         const outs = {};
         const rest = msg.modes.filter((m) => !(direct && m === 'mean'));
-        if (direct && msg.modes.includes('mean')) outs.mean = mergeDirect(idx);
-        if (rest.length) Object.assign(outs, SR.merge(idx.map((i) => frames[i]), idx.map((i) => reg.warps[i]),
-          { modes: rest, refIndex: refK, onProgress: step('merge') }));
+        if (pool.length) {
+          const W = frames[0].width * 2, H = frames[0].height * 2, line = W * 4;
+          const dm = direct && msg.modes.includes('mean');   // direct merge of the sensor samples
+          const key = idx.join() + (rest.length ? '|f' : '') + (dm ? '|d' : '');
+          if (key !== sceneKey) {
+            sceneKey = key;
+            const scene = { width: frames[0].width, refK, warps: idx.map((i) => reg.warps[i]) };
+            if (rest.length) scene.frames = idx.map((i) => plain(frames[i]));
+            if (dm) {
+              scene.warpsL = idx.map(wl);
+              scene.raws = idx.map((i) => ({ raw: raws[i].raw, info: raws[i].info, levels: raws[i].levels }));
+              scene.finish = { info: raws[0].info, exposure };
+            }
+            await Promise.all(pool.map((h) => h.call({ type: 'scene', scene })));
+          }
+          if (dm) outs.mean = { width: W, height: H, data: new Uint8ClampedArray(W * H * 4) };
+          for (const m of rest) outs[m] = { width: W, height: H, data: new Uint8ClampedArray(W * H * 4) };
+          const rows = Math.max(32, Math.ceil(H / (pool.length * 4) / 32) * 32);   // multiples of the 32-row strips, so bands match a single pass
+          const bands = [];
+          for (let y = 0; y < H; y += rows) bands.push([y, Math.min(H, y + rows)]);
+          let done = 0;
+          await runTasks(bands, async (h, [y0, y1]) => {
+            const r = await h.call({ type: 'band', y0, y1, rest, direct: dm });
+            for (const [m, buf] of Object.entries(r.outs)) outs[m].data.set(new Uint8ClampedArray(buf), y0 * line);
+            step('merge')(++done / bands.length, 'Merging');
+          });
+        } else {
+          if (direct && msg.modes.includes('mean')) outs.mean = mergeDirect(idx);
+          if (rest.length) Object.assign(outs, SR.merge(idx.map((i) => frames[i]), idx.map((i) => reg.warps[i]),
+            { modes: rest, refIndex: refK, onProgress: step('merge') }));
+        }
         // sharpening after the merge (deblur): fixed amount, or chosen from the burst itself
         let amount = typeof msg.sharpen === 'number' ? msg.sharpen : 0, picked = null;
         if (msg.sharpen === 'auto') {
@@ -111,12 +177,81 @@ function workerMain(SR, RAW) {
   };
 }
 
+// A helper worker: one photo's alignment, or one band of rows of the merge,
+// at a time. It talks to the main worker over a MessagePort.
+function helperMain(SR, RAW) {
+  let prep = null, scene = null, finish = null;
+  const handle = (msg) => {
+    if (msg.type === 'ref') {
+      prep = SR.prepareReference(msg.frame);
+      return {};
+    }
+    if (msg.type === 'align') return { result: SR.registerFrame(prep, msg.frame) };
+    if (msg.type === 'scene') {
+      scene = msg.scene;
+      if (scene.raws) finish = RAW.finisher(scene.finish.info, scene.finish.exposure);
+      return {};
+    }
+    // band: output rows [y0, y1) of the merge, as the main worker would make them
+    const region = { x: 0, y: msg.y0, width: scene.width * 2, height: msg.y1 - msg.y0 };
+    const outs = {}, transfer = [];
+    if (msg.direct) {
+      const cfa = (r) => ({ width: r.info.width, height: r.info.height, stride: r.info.rawWidth, data: r.raw, cfa: r.info.cfa, black: r.levels.black, gain: r.levels.gain });
+      outs.mean = SR.mergeCFA(scene.raws.map(cfa), scene.warpsL, { region, refIndex: scene.refK, toRGBA: finish }).data.buffer;
+    }
+    if (msg.rest.length) {
+      const r = SR.merge(scene.frames, scene.warps, { modes: msg.rest, refIndex: scene.refK, region });
+      for (const m of msg.rest) outs[m] = r[m].data.buffer;
+    }
+    for (const b of Object.values(outs)) transfer.push(b);
+    return { outs, transfer };
+  };
+  self.onmessage = (e) => {
+    const port = e.data.port;
+    port.onmessage = (ev) => {
+      const msg = ev.data;
+      try {
+        const { transfer, ...reply } = handle(msg);
+        port.postMessage({ ...reply, id: msg.id }, transfer || []);
+      } catch (err) {
+        port.postMessage({ id: msg.id, error: String((err && err.message) || err) });
+      }
+    };
+  };
+}
+
 // Built from function source: Chromium (WebView2) refuses file:// workers.
-const WORKER_URL = URL.createObjectURL(new Blob(
-  [`const SR = (${createSRCore.toString()})();\nconst RAW = (${createRaw.toString()})();\n(${workerMain.toString()})(SR, RAW);`],
+const blobURL = (main) => URL.createObjectURL(new Blob(
+  [`const SR = (${createSRCore.toString()})();\nconst RAW = (${createRaw.toString()})();\n(${main.toString()})(SR, RAW);`],
   { type: 'text/javascript' }));
+const WORKER_URL = blobURL(workerMain), HELPER_URL = blobURL(helperMain);
 let worker = null, onWorker = () => {};
+
+// Helpers hold their own copy of the photos, so the pool is sized to memory.
+const HELPER_BYTES = 3e9, MAX_HELPERS = 8, MIN_POOL_PIXELS = 0.5e6;
+let helpers = [];
+function poolSize(count, w, h, raw) {
+  if (window.forceWorkers != null) return window.forceWorkers;   // self-test override
+  if (w * h < MIN_POOL_PIXELS) return 0;
+  const each = count * w * h * (raw ? 7 : 4) * 1.25;
+  const n = Math.min((navigator.hardwareConcurrency || 2) - 1, MAX_HELPERS, Math.floor(HELPER_BYTES / each));
+  return n >= 2 ? n : 0;
+}
+function stopHelpers() { helpers.forEach((x) => x.terminate()); helpers = []; }
+// Starts n helpers; returns the ports that go to the main worker.
+function startHelpers(n) {
+  stopHelpers();
+  const ports = [];
+  for (let i = 0; i < n; i++) {
+    const ch = new MessageChannel(), x = new Worker(HELPER_URL);
+    x.onerror = (e) => fail('Worker error: ' + (e.message || e));
+    x.postMessage({ port: ch.port1 }, [ch.port1]);
+    helpers.push(x); ports.push(ch.port2);
+  }
+  return ports;
+}
 function startWorker() {
+  stopHelpers();
   if (worker) worker.terminate();
   worker = new Worker(WORKER_URL);
   worker.onmessage = (e) => {
@@ -482,7 +617,8 @@ async function runMerge() {
   state.photos.forEach((p) => { p.detail = null; p.include = true; });
   let frames;
   try { frames = await decodeAll(); } catch (e) { return fail('Could not read the photos: ' + e); }
-  worker.postMessage({ type: 'align', frames }, frames.map((f) => f.buffer));
+  const ports = startHelpers(poolSize(frames.length, w, h, !!state.photos[0].raw));
+  worker.postMessage({ type: 'align', frames, ports }, [...frames.map((f) => f.buffer), ...ports]);
 }
 
 function cancelMerge() {
@@ -657,20 +793,28 @@ async function writeFile(path, bytes) {
   }
 }
 
-// EXIF (camera, lens, date, exposure) from the reference photo, for JPEG output.
-async function withExif(bytes) {
+// EXIF (camera, lens, date, exposure) from the reference photo: an APP1
+// payload for the saved file, or null when there is none.
+async function exifPayload() {
   const ref = state.photos[state.results.refIndex];
   if (ref && ref.raw && ref.meta) {
-    return EXIF.insertApp1(bytes, EXIF.buildApp1({ ...ref.meta, software: `Burst Super-Res ${VERSION}`, width: state.results.width, height: state.results.height }));
+    return EXIF.buildApp1({ ...ref.meta, software: `Burst Super-Res ${VERSION}`, width: state.results.width, height: state.results.height });
   }
-  if (!ref || !/\.jpe?g$/i.test(ref.path)) return bytes;
+  if (!ref || !/\.jpe?g$/i.test(ref.path)) return null;
   try {
     const b64 = await tiny.api.call('readHead', { path: ref.path });
     const head = Uint8Array.fromBase64 ? Uint8Array.fromBase64(b64) : fromBase64(b64);
-    return EXIF.copyExif(head, bytes, { width: state.results.width, height: state.results.height });
+    const app1 = EXIF.extractApp1(head);
+    return app1 ? EXIF.patchApp1(app1, { width: state.results.width, height: state.results.height }) : null;
   } catch {
-    return bytes;   // saving matters more than the metadata
+    return null;   // saving matters more than the metadata
   }
+}
+
+async function withExif(bytes, kind) {
+  const payload = await exifPayload();
+  if (!payload) return bytes;
+  return kind === 'png' ? EXIF.insertPngExif(bytes, payload) : EXIF.insertApp1(bytes, payload);
 }
 
 async function save(kind, path) {
@@ -686,7 +830,7 @@ async function save(kind, path) {
     const blob = await new Promise((ok, bad) => canvas.toBlob(
       (b) => (b ? ok(b) : bad(new Error('the encoder returned nothing'))), kind === 'png' ? 'image/png' : 'image/jpeg', 0.95));
     let bytes = new Uint8Array(await blob.arrayBuffer());
-    if (kind !== 'png') bytes = await withExif(bytes);
+    bytes = await withExif(bytes, kind);
     setStatus('Writing file…');
     const size = await writeFile(path, bytes);
     setBusy(false); setProgress(null);
@@ -755,6 +899,7 @@ renderList();
 // drives the real UI end to end, stores timings, and quits. Off unless the env var is set.
 tiny.api.call('selftestConfig').then(async (cfg) => {
   if (!cfg) return;
+  if (cfg.workers != null) window.forceWorkers = cfg.workers;
   const report = { ok: false, ua: navigator.userAgent, dpr: window.devicePixelRatio };
   const when = (ev) => new Promise((ok) => window.addEventListener(ev, ok, { once: true }));
   const stage = (name) => tiny.store.set('selftest-stage', { name, at: Date.now() });   // last step reached, for hangs

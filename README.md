@@ -12,7 +12,7 @@
 - **Bad photos are left out for you.** Each photo gets a badge: Good, Soft or Too far off. Photos that do not line up are unticked automatically; areas where something moved are left out of that photo.
 - **Exactly 2x per side.** Four 6000 x 4000 photos give one 12000 x 8000 image. The app shows real pixel dimensions, not a megapixel claim.
 - **Compare like a photo editor.** Split slider or side by side, a small map to move around, Mean vs Median, and Lightroom-style keys.
-- **Keeps your EXIF.** Camera, lens, date and exposure from the reference photo go into the saved JPEG, for JPEG and RAW input.
+- **Keeps your EXIF.** Camera, lens, date and exposure from the reference photo go into the saved JPEG or PNG (as an `eXIf` chunk), for JPEG and RAW input.
 - **Optional sharpening after the merge.** A gentle deconvolution, off for camera JPEGs and automatic for RAW (it picks the amount that best predicts a photo left out of the merge).
 - **Brightness matching.** Exposure flicker between shots is measured per photo and colour and evened out before merging.
 - **Private and offline.** Your photos never leave your computer. No account, no upload, no nag screen.
@@ -127,7 +127,7 @@ Everything runs on your computer. The app makes no network requests except when 
 - **RAW: Sony ARW only**, compressed or uncompressed (ARW 2.x). Sony's newer lossless-compressed ARW is not supported. Decoding is checked against LibRaw on one real ILCE-6000 file; I had no A6400 ARW to test. No real RAW *burst* was available, so RAW quality numbers are from simulated bursts (see below).
 - **RAW colour is a neutral render**, not Sony's look: camera white balance, Sony's colour matrix from the file, sRGB, a soft highlight shoulder, and an exposure matched to the camera's preview.
 - **Sharpening can hurt.** On in-camera-sharpened JPEGs, Auto measured 0.1 to 0.9 dB worse in simulation, which is why it is off by default for JPEG.
-- EXIF is copied to JPEG output only, not PNG.
+- EXIF reaches PNG output too, but only from JPEG and RAW inputs (a PNG input has none to copy).
 
 ## Measured results
 
@@ -294,6 +294,7 @@ The math is in `src/frontend/sr-core.js`, with no dependencies. `raw.js` decodes
 tinyjs apps have two halves: a txiki.js backend (QuickJS, no JIT) and the OS webview (WebKitGTK, WKWebView or WebView2, all with a JIT). So:
 
 - **All pixel work runs in the page, in a Web Worker.** A tight numeric loop is much faster in a JIT, and the worker keeps the window responsive. The worker is built from function source as a Blob URL, because Chromium, which WebView2 uses, blocks workers loaded from `file://` URLs by default.
+- **Alignment and merge are spread over a pool of helper workers.** That worker hands each helper a `MessagePort`. Alignment gives each helper one photo at a time (local correction is the slow part); the merge gives each helper bands of output rows, cut on the merge's own 32-row strips, so the result is identical to a single pass (checked pixel for pixel, JPEG and RAW). Every helper keeps its own copy of the photos, so the pool is sized to memory (about 3 GB for all helpers, at most 8, at most cores - 1) and small photos (under 0.5 MP) skip it. Measured here on 24 cores: 6 simulated 2048 x 1344 JPEGs 8.4 s -> 3.0 s; the same as RAW 13.1 s -> 6.5 s (RAW decoding is still serial); 4 real 24 MP JPEGs 31.5 s -> 14.1 s.
 - **The backend only writes the output file.** The page encodes the result with `canvas.toBlob()` and sends it to the backend in 3 MB base64 chunks, because the bridge is text. A spike measured 16 MB in 1.3 s.
 - **Inputs load in the page** with `tiny.fileURL(path)` (`readAccess: true` in `tinyjs.json`). The webview decodes the JPEG and applies EXIF orientation.
 - **Memory.** Photos stay as 8-bit RGBA (96 MB per 24 MP photo). The merge works in strips of 32 output rows, so it never allocates a full-size float buffer. The output is one RGBA buffer (384 MB at 12000 x 8000). Measured peak for 2 x 24 MP photos: 1.9 GB in the WebKit web process. Plan for 2 to 3 GB of free RAM for 4 x 24 MP. The limit is about 67 MP inputs, because the 2x result must fit in one canvas (268 million pixels).
@@ -364,8 +365,7 @@ The code uses no platform-only APIs. `Uint8Array.prototype.toBase64` has a fallb
 - Test on macOS and Windows.
 - Shoot a real tripod burst on an A6400, in RAW. The real bursts above are A6000 JPEGs, and the only real ARW I had was one A6000 photo.
 - Test an A6400 ARW, and add Sony's lossless-compressed ARW.
-- Speed: alignment and merge are single-threaded JS. Several workers (one per photo or strip range) or WebGL would make them faster; local correction is the slow part.
-- EXIF for PNG output.
+- Speed: RAW decoding, sharpness measuring and sharpening are still single-threaded; WebGL is untried.
 - Detail-aware (edge-stretched) kernels for the sensor-sample merge, as in Wronski et al.; this version uses round ones.
 
 ## Credit

@@ -80,3 +80,33 @@ test('buildApp1 writes fields that a reader can parse back', () => {
   const jpeg = EXIF.insertApp1(Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]), app1);
   assert.deepEqual(EXIF.extractApp1(jpeg), app1);
 });
+
+test('insertPngExif puts a valid eXIf chunk after IHDR, before IDAT, and reads back', () => {
+  const zlib = require('node:zlib');
+  const chunk = (type, data) => {
+    const b = Buffer.alloc(12 + data.length);
+    b.writeUInt32BE(data.length, 0); b.write(type, 4, 'latin1'); Buffer.from(data).copy(b, 8);
+    b.writeUInt32BE(EXIF.crc32(b.subarray(4, 8 + data.length)), 8 + data.length);
+    return b;
+  };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(1, 0); ihdr.writeUInt32BE(1, 4); ihdr[8] = 8; ihdr[9] = 2;
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr),
+    chunk('IDAT', zlib.deflateSync(Buffer.from([0, 1, 2, 3]))), chunk('IEND', [])]);
+  assert.equal(EXIF.crc32(Buffer.from('123456789')), 0xcbf43926);
+  const app1 = EXIF.buildApp1({ make: 'SONY', dateTimeOriginal: '2023:03:20 23:30:49', width: 10, height: 8 });
+  const out = Buffer.from(EXIF.insertPngExif(png, app1));
+  // walk the chunks: order, lengths and CRCs
+  const types = [];
+  let exifData = null;
+  for (let o = 8; o < out.length;) {
+    const len = out.readUInt32BE(o), type = out.toString('latin1', o + 4, o + 8);
+    assert.equal(out.readUInt32BE(o + 8 + len), EXIF.crc32(out.subarray(o + 4, o + 8 + len)), type + ' crc');
+    if (type === 'eXIf') exifData = out.subarray(o + 8, o + 8 + len);
+    types.push(type); o += 12 + len;
+  }
+  assert.deepEqual(types, ['IHDR', 'eXIf', 'IDAT', 'IEND']);
+  assert.deepEqual(Uint8Array.from(exifData), Uint8Array.from(app1.subarray(6)));
+  assert.equal(EXIF.captureTime(Uint8Array.from([...app1.subarray(0, 6), ...exifData])), Date.UTC(2023, 2, 20, 23, 30, 49) / 1000);
+  assert.equal(EXIF.insertPngExif(out, app1).length, out.length, 'no second eXIf');
+  assert.equal(EXIF.insertPngExif(Uint8Array.from([1, 2, 3]), app1).length, 3, 'not a PNG: unchanged');
+});
