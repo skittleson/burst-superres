@@ -35,7 +35,7 @@ The builds are not signed. On macOS, right-click the app and pick **Open** the f
 Every release file has a GitHub build attestation (Sigstore): proof that it was built by this repository's release workflow from the tagged commit. With the GitHub CLI (2.49 or newer; older versions have no `attestation` command):
 
 ```sh
-gh attestation verify burst-superres-0.3.1-linux-x86_64.AppImage -R skittleson/burst-superres
+gh attestation verify burst-superres-0.4.0-linux-x86_64.AppImage -R skittleson/burst-superres
 ```
 
 The checksum file is also GPG-signed, and the AppImages carry an embedded GPG signature. The release key is [`docs/signing-key.asc`](docs/signing-key.asc), fingerprint `47FA AD5F 8499 2200 15C8  F5EA 019D FCD0 B211 3CAB`:
@@ -356,7 +356,7 @@ It adds the photos, merges, renders the compare view, saves, writes a report to 
 | macOS 15+ (universal) | Built by GitHub Actions (`tinyjs publish --universal`). Ad-hoc signed, not notarized. **Not tested.** |
 | Windows 10/11 x64 | Built by GitHub Actions (`tinyjs.cmd publish`). Not code-signed. **Not tested.** Check the Blob-URL worker and saving in WebView2 first. |
 
-Releases come from `.github/workflows/release.yml`. Push a tag like `v0.3.1` to build every platform (plus Linux AppImages) and publish them with checksums, a GPG signature (repository secret `GPG_PRIVATE_KEY`; skipped if it is not set) and build attestations.
+Releases come from `.github/workflows/release.yml`. Push a tag like `v0.4.0` to build every platform (plus Linux AppImages) and publish them with checksums, a GPG signature (repository secret `GPG_PRIVATE_KEY`; skipped if it is not set) and build attestations.
 
 The code uses no platform-only APIs. `Uint8Array.prototype.toBase64` has a fallback for older webviews.
 
@@ -371,3 +371,7 @@ The code uses no platform-only APIs. `Uint8Array.prototype.toBase64` has a fallb
 ## Credit
 
 The method and the original Python/OpenCV code come from chapter 7 of the Sony A6000/A6400 Hacking Guide and `image_utils.py` in [dslrCameraPowerRename](https://github.com/skittleson/dslrCameraPowerRename).
+
+## License
+
+[MIT](LICENSE)

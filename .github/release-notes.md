@@ -1,5 +1,11 @@
 Merge a burst of photos of the same static scene into one image with twice the width and height. Free tool from the [Sony A6000/A6400 Hacking Guide](https://dctmlab.taila665d5.ts.net/).
 
+## New in 0.4.0
+
+- **Faster.** Alignment and merging now run on a pool of helper workers. Four real 24 MP JPEGs went from 31.5 s to 14.1 s on a 24-core machine (measured in Chrome), and the output is identical to the single-threaded merge, pixel for pixel.
+- **EXIF in PNG output.** Saved PNGs carry an `eXIf` chunk with the same EXIF as saved JPEGs, for JPEG and RAW input.
+- Now MIT licensed.
+
 ## New in 0.3.1
 
 - Release files are signed: GPG signature on the checksums, embedded GPG signatures in the AppImages, and GitHub build attestations for every file. No app changes.
