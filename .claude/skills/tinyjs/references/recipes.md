@@ -176,3 +176,21 @@ from the app id's store.json in the platform data dir
 (`~/Library/Application Support/<id>/` on macOS, `~/.local/share/<id>/` on
 Linux). Reload-survival tests: write a phase marker to the store, call
 `location.reload()`, branch on the marker at boot.
+
+## Testing the frontend in headless Chrome (when `tinyjs dev` needs a display)
+
+If the app has a stand-in for the `tiny` bridge (a small `tiny-shim.js` plus a
+static server that serves the frontend and local files), a headless
+`google-chrome --headless=new --remote-debugging-port=N --no-sandbox` can run
+the real page. Drive it with a ~30-line Node script over CDP (Node 22+ has a
+global `WebSocket`): `Page.navigate` to `http://127.0.0.1:PORT/#<config json>`,
+poll `Runtime.evaluate` on a status element, then evaluate a hash of the
+result canvas. Top-level `const`s of classic scripts (like `state`) are
+reachable from `evaluate`. Gotchas:
+- The in-app browser panel may report `drivable: false`; use headless Chrome.
+- Run long jobs with `nohup ... &` and a log, then poll with short `sleep`s;
+  a foreground run past the tool timeout just hangs the call.
+- `pkill -f <pattern>` kills your own shell when the pattern is in its
+  command line; use a bracket trick (`pkill -f "[s]erve.js"`) or a PID.
+- Chrome only proves page logic. Also run the real `tinyjs dev` once
+  (WebKitGTK) with the self-test env var, e.g. writing an output file.

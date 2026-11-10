@@ -77,3 +77,33 @@ audible pages are exempt — but don't generalize that to your own timers.
 | per-frame animation state | visible page (rAF) or backend tick | hidden pages are throttled |
 | calling a C library | backend FFI | the call is native; keep the JS loop around it thin |
 | big blob page→backend or back | write a file, pass the path | wire is base64 text |
+
+## Parallel pixel work: a pool of Web Workers
+
+One worker keeps the window responsive; it does not use the other cores.
+For a heavy per-item or per-band job (image alignment/merge, parsing many
+files), run a pool. Lessons from burst-superres (24 cores, 8.4 s -> 3.0 s):
+
+- **Build every worker from function source as a Blob URL**
+  (`new Blob([\`(${fn.toString()})()\`])`): WebView2 refuses `file://`
+  workers. Inline the shared libraries the same way
+  (`const SR = (${createCore.toString()})();`), so the core must be a
+  self-contained factory function.
+- **Don't spawn nested workers; hand over `MessagePort`s.** The page creates
+  the helpers, makes one `MessageChannel` per helper, posts `port1` to the
+  helper and transfers `port2` to the coordinating worker in its next
+  message. The coordinator then does request/id RPC over the ports.
+- **There is no shared memory.** `SharedArrayBuffer` needs cross-origin
+  isolation, which a `file://` page doesn't have, so each helper receives a
+  structured-clone copy of its inputs. Size the pool to memory
+  (bytes per helper x count under a budget), cap it (cores - 1, ~8), skip it
+  for small inputs, and fall back to the serial path when the pool would be
+  smaller than 2.
+- **Split work so results are bit-identical to the serial run.** Cut bands on
+  the algorithm's own strip/tile boundaries, not arbitrary rows; strip-local
+  maths (like a per-strip centre) otherwise shifts at the seams. Make
+  helpers pull tasks from a shared queue so uneven tasks balance.
+- **Terminate helpers together with the coordinator** (the only way to cancel
+  a busy worker).
+- Keep an override (self-test config) to force pool size 0 or N, then compare
+  a hash of the output of both. Do that before trusting any speedup.
