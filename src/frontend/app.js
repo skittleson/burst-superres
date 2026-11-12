@@ -834,8 +834,12 @@ async function save(kind, path) {
     setStatus('Writing file…');
     const size = await writeFile(path, bytes);
     setBusy(false); setProgress(null);
-    $('status').innerHTML = `Saved ${(size / 1048576).toFixed(1)} MB to ${esc(path)}. <a href="#" id="reveal">Show in folder</a>`;
-    $('reveal').onclick = (e) => { e.preventDefault(); tiny.app.shell.reveal(path); };
+    if (tiny.web) {
+      $('status').textContent = `Saved ${(size / 1048576).toFixed(1)} MB as ${fileName(path)}.`;
+    } else {
+      $('status').innerHTML = `Saved ${(size / 1048576).toFixed(1)} MB to ${esc(path)}. <a href="#" id="reveal">Show in folder</a>`;
+      $('reveal').onclick = (e) => { e.preventDefault(); tiny.app.shell.reveal(path); };
+    }
     return path;
   } catch (e) {
     fail('Save failed: ' + ((e && e.message) || e));

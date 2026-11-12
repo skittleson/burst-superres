@@ -17,6 +17,12 @@
 - **Brightness matching.** Exposure flicker between shots is measured per photo and colour and evened out before merging.
 - **Private and offline.** Your photos never leave your computer. No account, no upload, no nag screen.
 
+## Use it in your browser
+
+**[skittleson.github.io/burst-superres](https://skittleson.github.io/burst-superres/)** runs the same app as a web page, with nothing to install. It is the same code as the desktop app: the merge, RAW support, badges, compare view and EXIF all work the same way. Your photos are read inside the browser tab and are never uploaded.
+
+Use desktop Chrome, Edge or Firefox. A full-size merge needs a few GB of memory, so phones and tablets may run out; for 24 MP bursts the desktop app is the safer choice. In Chrome and Edge, **Save** opens a save dialog; other browsers download the file instead.
+
 ## Download
 
 Get the latest version from [Releases](https://github.com/skittleson/burst-superres/releases/latest):
@@ -336,6 +342,17 @@ The benchmark needs `djpeg` and `cjpeg` (libjpeg-turbo) on the PATH. I do not us
 
 `tools/ui-preview/serve.js` serves the real frontend to a normal browser, with a stand-in for the tinyjs bridge, for docs screenshots. The screenshots in this README come from it, rendered in headless Chromium at 1280 x 820 (2x). They show the same HTML, CSS and JavaScript as the app, without the native window frame. The URL hash takes the same JSON as `BURST_SELFTEST`.
 
+### Web version
+
+```sh
+node tools/build-web.js            # writes dist/web
+python3 -m http.server -d dist/web # then open http://localhost:8000/
+```
+
+The web build copies `src/frontend` unchanged and adds `src/web/tiny-web.js`, a stand-in for the tinyjs bridge built on browser APIs: file and folder pickers, drag and drop, `File.slice()` for the header reads, and a save dialog (Chromium) or download for the output. `src/web/web.css` lets the layout scroll in small windows. `index.html` gets a "Get the desktop app" link, a memory note and web wording in the footer; the build fails if those edits stop matching. `.github/workflows/pages.yml` publishes it to GitHub Pages on every `v*` tag, alongside the desktop release, or by hand with workflow_dispatch. Pages must be set to **Source: GitHub Actions** in the repository settings.
+
+Checked in headless Chrome: 8 x 3000 x 2000 JPEGs through the file picker (6.4 s, all Good), 6 synthetic ARWs through the folder picker (direct sensor merge, 4.7 s, EXIF kept), drag and drop, the mixed-size error, and saving as a download.
+
 ### End-to-end smoke test
 
 The app has a self-test that drives the real UI in the real webview. It is off unless you set `BURST_SELFTEST`:
@@ -355,6 +372,7 @@ It adds the photos, merges, renders the compare view, saves, writes a report to 
 | Linux ARM64 (tarball and AppImage) | Built by GitHub Actions on Ubuntu 22.04. **Not tested.** |
 | macOS 15+ (universal) | Built by GitHub Actions (`tinyjs publish --universal`). Ad-hoc signed, not notarized. **Not tested.** |
 | Windows 10/11 x64 | Built by GitHub Actions (`tinyjs.cmd publish`). Not code-signed. **Not tested.** Check the Blob-URL worker and saving in WebView2 first. |
+| Web (GitHub Pages) | Tested in headless Chrome (file and folder pickers, drop, JPEG and RAW merges, download). Firefox, Safari and the Chromium save dialog **not tested**. |
 
 Releases come from `.github/workflows/release.yml`. Push a tag like `v0.4.0` to build every platform (plus Linux AppImages) and publish them with checksums, a GPG signature (repository secret `GPG_PRIVATE_KEY`; skipped if it is not set) and build attestations.
 
