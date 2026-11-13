@@ -9,6 +9,7 @@ test('web build: the desktop page plus the web parts', () => {
   const html = webIndex(fs.readFileSync(path.join(__dirname, '../src/frontend/index.html'), 'utf8'));
   assert.ok(html.indexOf('<script src="tiny-web.js">') < html.indexOf('<script src="app.js">'), 'bridge stand-in loads before the app');
   assert.match(html, /web\.css/);
+  assert.ok(html.indexOf('<script src="analytics.js">') > html.indexOf('<script src="app.js">'), 'analytics loads after the app');
   assert.match(html, /Get the desktop app/);
   assert.match(html, /Your photos are never uploaded/);
   assert.doesNotMatch(html, /never leave this computer/);

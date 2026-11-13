@@ -30,13 +30,15 @@ function webIndex(html) {
   html = replaceOnce(html, '</h1>',
     `</h1>\n  <a class="get-app" href="${RELEASES}" target="_blank" rel="noopener">Get the desktop app</a>`);
   html = replaceOnce(html, '<span class="muted">Runs offline. Your photos never leave this computer.</span>',
-    '<span class="muted">Runs in your browser. Your photos are never uploaded.</span>');
+    '<span class="muted">Runs in your browser. Your photos are never uploaded. ' +
+    '<a href="#" id="statsToggle" title="Google Analytics counts visits and merges: numbers and settings only, never photos or file names">Usage stats</a></span>');
   html = replaceOnce(html, '<p id="estimate" class="muted small"></p>',
     '<p id="estimate" class="muted small"></p>\n    <p class="web-note">Full-size merges need a few GB of memory: use desktop Chrome, Edge or Firefox. ' +
     `Phones and tablets may run out. The <a href="${RELEASES}" target="_blank" rel="noopener">desktop app</a> does the same merge.</p>`);
   // plain links in the page instead of the desktop's "open in browser" bridge call
   html = html.replace(/<a href="#" data-url="([^"]+)">/g, '<a href="$1" target="_blank" rel="noopener">');
   html = replaceOnce(html, '<script src="sr-core.js"></script>', '<script src="tiny-web.js"></script>\n<script src="sr-core.js"></script>');
+  html = replaceOnce(html, '<script src="app.js"></script>', '<script src="app.js"></script>\n<script src="analytics.js"></script>');
   return html;
 }
 

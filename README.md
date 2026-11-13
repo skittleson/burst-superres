@@ -25,6 +25,8 @@
 
 Use desktop Chrome, Edge or Firefox. A full-size merge needs a few GB of memory, so phones and tablets may run out; for 24 MP bursts the desktop app is the safer choice. In Chrome and Edge, **Save** opens a save dialog; other browsers download the file instead.
 
+The web version (not the desktop app) counts visits and merges with Google Analytics: photo count, size, JPEG or RAW, method, merge time, alignment results and saves. It never sends file names, EXIF or pixels. In European time zones it asks first, and the **Usage stats** link in the footer turns it off.
+
 ## Download
 
 Get the latest version from [Releases](https://github.com/skittleson/burst-superres/releases/latest):
