@@ -2,14 +2,21 @@
 // Builds the web version (GitHub Pages) from the desktop frontend:
 // src/frontend plus the browser stand-in for the tinyjs bridge (src/web).
 //
-//   node tools/build-web.js [outDir]     # default dist/web
+//   node tools/build-web.js [outDir] [--samples dir]   # default dist/web
+//
+// --samples copies the JPEGs in dir into samples/ with a samples.json, which
+// turns on the "Try a sample burst" button. CI downloads them from the
+// sample-photos release, so the photos are not in git.
 //
 // The app code is copied as is; only index.html gets the web additions.
 const fs = require('fs');
 const path = require('path');
 
 const root = path.join(__dirname, '..');
-const out = path.resolve(process.argv[2] || path.join(root, 'dist/web'));
+const args = process.argv.slice(2);
+const flag = args.indexOf('--samples');
+const samplesDir = flag >= 0 ? args.splice(flag, 2)[1] : null;
+const defaultOut = path.resolve(args[0] || path.join(root, 'dist/web'));
 const RELEASES = 'https://github.com/skittleson/burst-superres/releases/latest';
 
 // Each edit must match exactly once, so a changed index.html fails the build
@@ -32,17 +39,33 @@ function webIndex(html) {
   html = replaceOnce(html, '<span class="muted">Runs offline. Your photos never leave this computer.</span>',
     '<span class="muted">Runs in your browser. Your photos are never uploaded. ' +
     '<a href="#" id="statsToggle" title="Google Analytics counts visits and merges: numbers and settings only, never photos or file names">Usage stats</a></span>');
+  html = replaceOnce(html, '<button id="pickFolder">Choose folder…</button>\n      </div>',
+    '<button id="pickFolder">Choose folder…</button>\n      </div>\n      <button id="sample" class="sample" hidden></button>');
   html = replaceOnce(html, '<p id="estimate" class="muted small"></p>',
     '<p id="estimate" class="muted small"></p>\n    <p class="web-note">Full-size merges need a few GB of memory: use desktop Chrome, Edge or Firefox. ' +
     `Phones and tablets may run out. The <a href="${RELEASES}" target="_blank" rel="noopener">desktop app</a> does the same merge.</p>`);
   // plain links in the page instead of the desktop's "open in browser" bridge call
   html = html.replace(/<a href="#" data-url="([^"]+)">/g, '<a href="$1" target="_blank" rel="noopener">');
   html = replaceOnce(html, '<script src="sr-core.js"></script>', '<script src="tiny-web.js"></script>\n<script src="sr-core.js"></script>');
-  html = replaceOnce(html, '<script src="app.js"></script>', '<script src="app.js"></script>\n<script src="analytics.js"></script>');
+  html = replaceOnce(html, '<script src="app.js"></script>', '<script src="app.js"></script>\n<script src="samples.js"></script>\n<script src="analytics.js"></script>');
   return html;
 }
 
-function build() {
+const SAMPLE_NOTE = 'Sample: 8 shots of a canyon, Sony A6000, 20 mm, f/11, ISO 100, camera braced. Click Merge.';
+
+function addSamples(dir, out) {
+  const files = fs.readdirSync(dir).filter((n) => /\.jpe?g$/i.test(n)).sort();
+  if (!files.length) throw new Error('build-web: no JPEGs in ' + dir);
+  fs.mkdirSync(path.join(out, 'samples'));
+  for (const n of files) fs.copyFileSync(path.join(dir, n), path.join(out, 'samples', n));
+  fs.writeFileSync(path.join(out, 'samples/samples.json'), JSON.stringify({
+    title: 'Real photos from the README example, downloaded into this tab',
+    note: SAMPLE_NOTE,
+    files: files.map((n) => ({ name: n, size: fs.statSync(path.join(dir, n)).size })),
+  }, null, 1));
+}
+
+function build(out = defaultOut, samples = samplesDir) {
   fs.rmSync(out, { recursive: true, force: true });
   fs.mkdirSync(out, { recursive: true });
   const front = path.join(root, 'src/frontend');
@@ -54,6 +77,7 @@ function build() {
   fs.copyFileSync(path.join(root, 'icon.png'), path.join(out, 'icon.png'));
   fs.writeFileSync(path.join(out, 'index.html'), webIndex(fs.readFileSync(path.join(front, 'index.html'), 'utf8')));
   fs.writeFileSync(path.join(out, '.nojekyll'), '');
+  if (samples) addSamples(samples, out);
   return out;
 }
 

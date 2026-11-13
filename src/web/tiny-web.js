@@ -135,6 +135,8 @@ window.tiny = (() => {
 
   return {
     web: true,
+    // File objects from the page itself (the sample burst): paths the app can use
+    addFiles: (list) => list.map((f) => addFile(f)),
     fileURL(path) {
       if (!urls.has(path)) urls.set(path, URL.createObjectURL(fileOf(path)));
       return urls.get(path);

@@ -14,3 +14,5 @@ header .get-app { margin-left: auto; font-size: 13px; }
   main { grid-template-columns: 1fr; }
   .result { min-height: 520px; }
 }
+.drop button.sample { background: none; border: none; color: var(--accent); padding: 0; font-size: 13px; }
+.drop button.sample:hover:not(:disabled) { background: none; text-decoration: underline; }

@@ -2,7 +2,7 @@
 
 **Merge a burst of photos of the same scene into one image with twice the width and height.** A small, free desktop app for macOS, Windows and Linux, from the [Sony A6000/A6400 Hacking Guide](https://dctmlab.taila665d5.ts.net/) by [Do Code That Matters](https://docodethatmatters.com/).
 
-**[Try it now in your browser](https://skittleson.github.io/burst-superres/)**: nothing to install, and your photos are never uploaded. Or [download the desktop app](#download).
+**[Try it now in your browser](https://skittleson.github.io/burst-superres/)**: nothing to install, and your photos are never uploaded. Or [download the desktop app](#download). No burst of your own yet? Click **Try a sample burst** on the page, or get the [sample photos](https://github.com/skittleson/burst-superres/releases/tag/sample-photos) (8 camera JPEGs, `sample-canyon-burst.zip`) for the desktop app.
 
 ![Burst Super-Res merging a real 8-shot Sony A6000 burst, with the before/after slider](docs/media/app-real-burst.jpg)
 
@@ -353,7 +353,7 @@ node tools/build-web.js            # writes dist/web
 python3 -m http.server -d dist/web # then open http://localhost:8000/
 ```
 
-The web build copies `src/frontend` unchanged and adds `src/web/tiny-web.js`, a stand-in for the tinyjs bridge built on browser APIs: file and folder pickers, drag and drop, `File.slice()` for the header reads, and a save dialog (Chromium) or download for the output. `src/web/web.css` lets the layout scroll in small windows. `index.html` gets a "Get the desktop app" link, a memory note and web wording in the footer; the build fails if those edits stop matching. `.github/workflows/pages.yml` publishes it to GitHub Pages on every `v*` tag, alongside the desktop release, or by hand with workflow_dispatch. Pages must be set to **Source: GitHub Actions** in the repository settings.
+The web build copies `src/frontend` unchanged and adds `src/web/tiny-web.js`, a stand-in for the tinyjs bridge built on browser APIs: file and folder pickers, drag and drop, `File.slice()` for the header reads, and a save dialog (Chromium) or download for the output. `src/web/web.css` lets the layout scroll in small windows. `index.html` gets a "Get the desktop app" link, a memory note and web wording in the footer; the build fails if those edits stop matching. `.github/workflows/pages.yml` publishes it to GitHub Pages on every `v*` tag, alongside the desktop release, or by hand with workflow_dispatch. It also downloads the JPEGs from the `sample-photos` release and builds with `--samples`, which adds the **Try a sample burst** button (the photos are not in git; their Sony maker notes, which hold the camera's internal serial number, were stripped). Pages must be set to **Source: GitHub Actions** in the repository settings.
 
 Checked in headless Chrome: 8 x 3000 x 2000 JPEGs through the file picker (6.4 s, all Good), 6 synthetic ARWs through the folder picker (direct sensor merge, 4.7 s, EXIF kept), drag and drop, the mixed-size error, and saving as a download.
 

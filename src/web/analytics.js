@@ -101,5 +101,6 @@
   document.getElementById('savePng').addEventListener('click', () => send('save_image', { format: 'png', ...photoInfo() }), true);
   document.getElementById('pick').addEventListener('click', () => send('add_photos', { via: 'files' }), true);
   document.getElementById('pickFolder').addEventListener('click', () => send('add_photos', { via: 'folder' }), true);
+  document.getElementById('sample').addEventListener('click', () => send('add_photos', { via: 'sample' }), true);
   document.addEventListener('drop', () => send('add_photos', { via: 'drop' }), true);
 })();

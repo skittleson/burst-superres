@@ -29,3 +29,17 @@ test('web build: writes every file the page loads', () => {
 test('web build: fails loudly when index.html no longer matches', () => {
   assert.throws(() => webIndex('<html></html>'), /expected exactly one match/);
 });
+
+test('web build: --samples adds the photos and the list the button reads', () => {
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), 'burst-samples-'));
+  fs.writeFileSync(path.join(src, 'b.JPG'), 'xx');
+  fs.writeFileSync(path.join(src, 'a.jpg'), 'xxxx');
+  fs.writeFileSync(path.join(src, 'notes.txt'), 'skip');
+  const dir = build(fs.mkdtempSync(path.join(os.tmpdir(), 'burst-web-')), src);
+  const list = JSON.parse(fs.readFileSync(path.join(dir, 'samples/samples.json'), 'utf8'));
+  assert.deepStrictEqual(list.files, [{ name: 'a.jpg', size: 4 }, { name: 'b.JPG', size: 2 }]);
+  assert.ok(fs.existsSync(path.join(dir, 'samples/b.JPG')));
+  assert.ok(!fs.existsSync(path.join(dir, 'samples/notes.txt')));
+  assert.match(fs.readFileSync(path.join(dir, 'index.html'), 'utf8'), /<button id="sample" class="sample" hidden>/);
+  for (const d of [src, dir]) fs.rmSync(d, { recursive: true, force: true });
+});

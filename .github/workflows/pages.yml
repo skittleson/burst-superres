@@ -26,7 +26,12 @@ jobs:
         with: { node-version: 22 }
       - run: npm ci
       - run: npm test
-      - run: node tools/build-web.js _site
+      # The sample burst lives in the sample-photos release, not in git.
+      - name: Sample photos
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download sample-photos -p '*.JPG' -D samples -R "$GITHUB_REPOSITORY"
+      - run: node tools/build-web.js _site --samples samples
       - uses: actions/upload-pages-artifact@v3
         with: { path: _site }
 
