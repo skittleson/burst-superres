@@ -4,6 +4,9 @@
 /* global tiny, state, setStatus, setProgress, addDropped */
 (async () => {
   const button = document.getElementById('sample');
+  // only packed by CI: build-web.js adds this meta tag when it copies samples/,
+  // so a local build never fetches samples.json (no console 404)
+  if (!document.querySelector('meta[name="burst-samples"]')) return;
   let list;
   try {
     const r = await fetch('samples/samples.json');

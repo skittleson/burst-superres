@@ -14,6 +14,8 @@ test('web build: the desktop page plus the web parts', () => {
   assert.match(html, /Your photos are never uploaded/);
   assert.doesNotMatch(html, /never leave this computer/);
   assert.doesNotMatch(html, /data-url=/);
+  assert.match(html, /<link rel="manifest" href="manifest.webmanifest">/);
+  assert.match(html, /<link rel="apple-touch-icon"/);
 });
 
 test('web build: writes every file the page loads', () => {
@@ -23,6 +25,19 @@ test('web build: writes every file the page loads', () => {
   assert.ok(refs.length >= 8);
   for (const ref of refs) assert.ok(fs.existsSync(path.join(dir, ref)), `missing ${ref}`);
   assert.ok(fs.existsSync(path.join(dir, '.nojekyll')));
+
+  // PWA parts: a valid manifest, the icons it lists, a stamped service worker.
+  const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.webmanifest'), 'utf8'));
+  assert.ok(manifest.name && manifest.start_url === './' && manifest.icons.length >= 3);
+  for (const icon of manifest.icons) assert.ok(fs.existsSync(path.join(dir, icon.src)), `missing icon ${icon.src}`);
+  const sw = fs.readFileSync(path.join(dir, 'sw.js'), 'utf8');
+  const shellMatch = sw.match(/\/\*__SHELL__\*\/(\[[^\]]*\])\/\*__SHELL__\*\//);
+  assert.ok(shellMatch, 'sw.js carries the shell list');
+  const shell = JSON.parse(shellMatch[1]);
+  for (const f of ['./index.html', './app.js', './sr-core.js', './style.css', './manifest.webmanifest']) {
+    assert.ok(shell.includes(f), `sw.js precaches ${f}`);
+  }
+  assert.ok(!shell.some((f) => f.startsWith('./samples/')), 'the sample burst is not precached');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

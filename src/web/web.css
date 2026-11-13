@@ -1,18 +1,53 @@
-/* Web version only, on top of style.css. */
+/* Web version only, on top of style.css: responsive layout (a browser window
+ * can be any size, the desktop window is fixed), PWA chrome, sample button. */
+
 header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-header .get-app { margin-left: auto; font-size: 13px; }
+header .get-app { margin-left: auto; font-size: 13px; white-space: nowrap; }
 .web-note { font-size: 12px; color: var(--muted); }
 .consent {
   position: fixed; left: 50%; bottom: 52px; transform: translateX(-50%); z-index: 10; max-width: 640px;
   display: flex; gap: 10px; align-items: center; padding: 10px 14px; font-size: 13px;
-  background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.5);
+  background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; box-shadow: var(--shadow);
 }
 
-/* The desktop window has a fixed size; a browser window can be smaller. */
-@media (max-width: 900px), (max-height: 640px) {
-  body { overflow: auto; height: auto; min-height: 100%; }
-  main { grid-template-columns: 1fr; }
-  .result { min-height: 520px; }
+.install {
+  margin-left: 10px; font-size: 12.5px; padding: 4px 11px;
+  border-color: var(--accent); color: var(--accent); background: none;
 }
+.install:hover:not(:disabled) { background: var(--accent-dim); }
+.offline-note { color: var(--soft); white-space: nowrap; }
+.offline-note[hidden] { display: none; }
+
 .drop button.sample { background: none; border: none; color: var(--accent); padding: 0; font-size: 13px; }
 .drop button.sample:hover:not(:disabled) { background: none; text-decoration: underline; }
+
+/* One column below 960px: the page scrolls, the panels stack, and the compare
+ * view keeps enough height to be useful on a phone. */
+@media (max-width: 960px), (max-height: 640px) {
+  body { overflow: auto; height: auto; min-height: 100%; }
+  header { padding: 14px 16px 8px; }
+  main { grid-template-columns: 1fr; padding: 0 12px; gap: 12px; }
+  footer { padding: 12px 16px; }
+  .result { min-height: 520px; }
+  .note { margin-top: 12px; }
+
+  /* touch-friendly controls */
+  button, select { min-height: 38px; }
+  .drop { padding: 26px 14px 22px; }
+  .drop-buttons { flex-direction: column; gap: 10px; width: 100%; }
+  .drop-buttons button { width: 100%; }
+
+  .toolbar { gap: 8px; }
+  .toolbar .dims { flex-basis: 100%; order: -1; }
+  .tool-actions { flex: 1 1 100%; }
+  .tool-actions button { flex: 1; }
+  .nav canvas { width: 110px; }
+  .compare { min-height: 300px; }
+  .hint .hint-keys { display: none; }   /* the keyboard shortcuts need a keyboard */
+  .howto { padding: 20px; }
+}
+
+@media (max-width: 480px) {
+  h1 span { display: none; }
+  .nav canvas { width: 86px; }
+}

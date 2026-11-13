@@ -1,0 +1,17 @@
+{
+  "name": "Burst Super-Res",
+  "short_name": "Burst SR",
+  "description": "Merge a burst of photos of the same scene into one image with twice the width and height. Runs in your browser; photos are never uploaded.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#101216",
+  "theme_color": "#101216",
+  "categories": ["photography", "utilities"],
+  "icons": [
+    { "src": "icons/pwa-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/pwa-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -81,6 +81,20 @@ test('buildApp1 writes fields that a reader can parse back', () => {
   assert.deepEqual(EXIF.extractApp1(jpeg), app1);
 });
 
+test('cameraInfo reads make, model, exposure and lens back from built EXIF', () => {
+  const app1 = EXIF.buildApp1({ make: 'SONY', model: 'ILCE-6000', dateTimeOriginal: '2023:03:20 23:30:49', exposureTime: [1, 60], fNumber: [35, 10], iso: 3200, focalLength: [160, 10], lensModel: 'E PZ 16-50mm F3.5-5.6 OSS', width: 12048, height: 8048 });
+  const info = EXIF.cameraInfo(app1);
+  assert.equal(info.make, 'SONY');
+  assert.equal(info.model, 'ILCE-6000');
+  assert.deepEqual(info.exposureTime, [1, 60]);
+  assert.deepEqual(info.fNumber, [35, 10]);
+  assert.equal(info.iso, 3200);
+  assert.deepEqual(info.focalLength, [160, 10]);
+  assert.equal(info.lensModel, 'E PZ 16-50mm F3.5-5.6 OSS');
+  assert.equal(info.time, Date.UTC(2023, 2, 20, 23, 30, 49) / 1000);
+  assert.equal(EXIF.cameraInfo(null), null);
+});
+
 test('insertPngExif puts a valid eXIf chunk after IHDR, before IDAT, and reads back', () => {
   const zlib = require('node:zlib');
   const chunk = (type, data) => {

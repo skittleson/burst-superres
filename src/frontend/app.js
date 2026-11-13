@@ -286,12 +286,19 @@ function thumbOf(img) {
   return { thumb: c.toDataURL('image/jpeg', 0.8), mean: s / (d.length / 4) };
 }
 
+// Camera and exposure from a photo's own metadata, for the line under the
+// compare view. Best effort: a broken header just means no line.
+async function jpegCameraInfo(path) {
+  try { return EXIF.cameraInfo(EXIF.extractApp1(b64bytes(await tiny.api.call('readHead', { path })))); }
+  catch { return null; }
+}
+
 // An ARW: size and metadata from the header, thumbnail from the embedded preview.
 async function rawEntry(path) {
   const head = b64bytes(await tiny.api.call('readHead', { path, bytes: 200000 }));
   const info = RAWF.parse(head), meta = RAWF.headerInfo(head);
   const turned = info.orientation === 6 || info.orientation === 8;
-  const entry = { path, name: fileName(path), raw: true, meta, width: turned ? info.height : info.width, height: turned ? info.width : info.height };
+  const entry = { path, name: fileName(path), raw: true, meta, cam: meta, width: turned ? info.height : info.width, height: turned ? info.width : info.height };
   if (meta.preview) {
     const jpg = b64bytes(await tiny.api.call('readRange', { path, offset: meta.preview.offset, length: meta.preview.length }));
     const url = URL.createObjectURL(new Blob([jpg], { type: 'image/jpeg' }));
@@ -315,7 +322,8 @@ async function addPaths(paths) {
       } else {
         const img = await loadImage(path);
         state.photos.push({ path, name: fileName(path), width: img.naturalWidth, height: img.naturalHeight,
-          ...thumbOf(img), include: true, detail: null });
+          ...thumbOf(img), include: true, detail: null,
+          cam: /\.jpe?g$/i.test(path) ? await jpegCameraInfo(path) : null });
         img.src = '';
       }
     } catch (e) {
@@ -379,6 +387,7 @@ function photosChanged() {
   renderList();
   updateStale();
   updateEstimate();
+  updateHints();
 }
 
 function badgeFor(p, i) {
@@ -444,6 +453,7 @@ function setStatus(text, isError = false) {
 function setProgress(p) {
   $('progress').hidden = p == null;
   $('progress').firstElementChild.style.width = `${Math.round((p || 0) * 100)}%`;
+  $('progress').setAttribute('aria-valuenow', String(Math.round((p || 0) * 100)));
 }
 function setBusy(b) {
   state.busy = b;
@@ -521,6 +531,7 @@ let sharpenTouched = false;
 function applySharpenDefault() {
   if (sharpenTouched || !state.photos.length) return;
   $('sharpen').value = state.photos.every((p) => p.raw) ? 'auto' : 'off';
+  updateHints();
 }
 const sharpenWanted = () => { const v = $('sharpen').value; return v === 'off' ? 0 : v === 'auto' ? 'auto' : +v; };
 
@@ -529,6 +540,25 @@ const modesWanted = () => {
   return $('compareMethods').checked ? [main, main === 'median' ? 'mean' : 'median'] : [main];
 };
 const mergeKey = () => photoKey() + '|' + state.photos.map((p) => +p.include).join('') + '|' + modesWanted().join(',') + '|' + $('sharpen').value;
+
+// One plain sentence for each setting, so nobody has to guess what a control
+// does before trying it.
+const MODE_HINT = {
+  mean: 'Averages the photos: least noise, the usual best choice.',
+  median: 'Resists things that moved between shots (people, leaves), a little noisier.',
+  pairwise: 'Blend of the two best-aligned photos, the method from the guide.',
+};
+const SHARPEN_HINT = {
+  off: 'Keeps the merge exactly as the photos were.',
+  auto: 'Tests a photo left out of the merge and picks a safe amount.',
+  0.25: 'A light pass over flat areas and edges.',
+  0.5: 'A visible pass on fine detail. Watch for grainy edges.',
+  1: 'A strong pass. Can add halos around hard edges.',
+};
+function updateHints() {
+  $('modeHint').textContent = MODE_HINT[$('mode').value] || '';
+  $('sharpenHint').textContent = SHARPEN_HINT[$('sharpen').value] || '';
+}
 
 function summaryText(details, refIndex) {
   let move = 0, worst = 0;
@@ -652,6 +682,7 @@ function showResults(msgs, inputW, inputH, count) {
   $('dims').textContent = `${main.width} × ${main.height} px, from ${count} photos of ${inputW} × ${inputH}` + (how ? ` · ${how}` : '');
   $('diff').textContent = `${MODE_LABEL[mainMode]} vs one photo upscaled 2×: ${main.diff.meanAbs.toFixed(1)} levels different on average (of 255); ` +
     `${main.diff.pctOver.toFixed(0)}% of pixels changed by more than ${main.diff.threshold} levels.`;
+  renderExifLine();
   $('compareWrap').hidden = state.results.modes.length < 2;
   const other = state.results.modes[1];
   if (other) $('compareSel').options[1].textContent = `${MODE_LABEL[mainMode]} vs ${MODE_LABEL[other]}`;
@@ -659,6 +690,32 @@ function showResults(msgs, inputW, inputH, count) {
   $('view').hidden = false;
   renderList(); updateStale();
   renderCompare();
+}
+
+// "Sony ILCE-6000 · 20 mm f/11 · 1/125 s · ISO 100" from the reference photo,
+// so a pro can read the shot data without leaving the app. Hidden when the
+// input has no EXIF (for example PNG files).
+function renderExifLine() {
+  const ref = state.results && state.photos[state.results.refIndex];
+  const c = ref && ref.cam;
+  const el = $('exifLine');
+  if (!c) { el.hidden = true; return; }
+  const expo = (t) => {
+    if (!t || !t[0] || !t[1]) return null;
+    const v = t[0] / t[1];
+    return (v >= 1 ? (v >= 10 ? String(Math.round(v)) : String(+v.toFixed(1))) : `1/${Math.round(1 / v)}`) + ' s';
+  };
+  const parts = [
+    [c.make, c.model].filter(Boolean).join(' '),
+    c.focalLength && c.focalLength[1] ? `${Math.round(c.focalLength[0] / c.focalLength[1])} mm` : null,
+    c.fNumber && c.fNumber[1] ? `f/${+(c.fNumber[0] / c.fNumber[1]).toFixed(1)}` : null,
+    expo(c.exposureTime),
+    c.iso ? `ISO ${c.iso}` : null,
+    c.lensModel && c.lensModel !== c.model ? c.lensModel : null,
+  ].filter(Boolean);
+  if (!parts.length) { el.hidden = true; return; }
+  el.textContent = `EXIF from the reference photo · ${parts.join(' · ')}`;
+  el.hidden = false;
 }
 
 function updateStale() {
@@ -853,9 +910,9 @@ $('pickFolder').addEventListener('click', pickFolder);
 $('merge').addEventListener('click', runMerge);
 $('remerge').addEventListener('click', runMerge);
 $('cancel').addEventListener('click', cancelMerge);
-$('mode').addEventListener('change', () => { renderList(); updateStale(); });
+$('mode').addEventListener('change', () => { renderList(); updateStale(); updateHints(); });
 $('compareMethods').addEventListener('change', updateStale);
-$('sharpen').addEventListener('change', () => { sharpenTouched = true; updateStale(); });
+$('sharpen').addEventListener('change', () => { sharpenTouched = true; updateStale(); updateHints(); });
 $('saveJpg').addEventListener('click', () => save('jpg'));
 $('savePng').addEventListener('click', () => save('png'));
 document.querySelectorAll('a[data-url]').forEach((a) => a.addEventListener('click', (e) => {
@@ -863,9 +920,14 @@ document.querySelectorAll('a[data-url]').forEach((a) => a.addEventListener('clic
 }));
 
 const drop = $('drop');
-tiny.win.onDrop((paths) => { drop.classList.remove('over'); if (!state.busy) addDropped(paths); });
-document.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
-document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) drop.classList.remove('over'); });
+function showDragOverlay(on) {
+  drop.classList.toggle('over', on);
+  $('dragOverlay').hidden = !on || state.busy;
+}
+tiny.win.onDrop((paths) => { showDragOverlay(false); if (!state.busy) addDropped(paths); });
+document.addEventListener('dragover', (e) => { e.preventDefault(); if (state.busy) return; const t = e.dataTransfer && e.dataTransfer.types; if (!t || [...t].includes('Files')) showDragOverlay(true); });
+document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) showDragOverlay(false); });
+document.addEventListener('drop', () => showDragOverlay(false));
 
 function about() {
   tiny.dialog.alert(`Burst Super-Res ${VERSION}`,
@@ -897,6 +959,7 @@ tiny.menu.on((id) => {
 });
 
 renderList();
+updateHints();
 
 // Smoke test: BURST_SELFTEST='{"photos":[...],"mode":"mean","compare":true,"out":"/tmp/x.jpg","focus":[x,y],
 // "split":50,"layout":"side","compareSel":"methods","untick":[2],"fullscreen":true,"holdMs":8000}'

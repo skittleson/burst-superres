@@ -27,11 +27,14 @@ function replaceOnce(text, find, replace) {
   return text.slice(0, at) + replace + text.slice(at + find.length);
 }
 
-function webIndex(html) {
+function webIndex(html, withSamples = false) {
   html = replaceOnce(html, '<meta charset="utf-8">',
-    '<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
+    '<meta charset="utf-8">\n' +
     '<meta name="description" content="Merge a burst of photos of the same scene into one image with twice the width and height. Runs in your browser; photos are never uploaded.">\n' +
-    '<link rel="icon" href="icon.png">');
+    '<meta name="theme-color" content="#101216">\n' +
+    '<link rel="manifest" href="manifest.webmanifest">\n' +
+    '<link rel="icon" href="icon.png">\n' +
+    '<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">');
   html = replaceOnce(html, '<link rel="stylesheet" href="style.css">',
     '<link rel="stylesheet" href="style.css">\n<link rel="stylesheet" href="web.css">');
   html = replaceOnce(html, '</h1>',
@@ -47,11 +50,31 @@ function webIndex(html) {
   // plain links in the page instead of the desktop's "open in browser" bridge call
   html = html.replace(/<a href="#" data-url="([^"]+)">/g, '<a href="$1" target="_blank" rel="noopener">');
   html = replaceOnce(html, '<script src="sr-core.js"></script>', '<script src="tiny-web.js"></script>\n<script src="sr-core.js"></script>');
-  html = replaceOnce(html, '<script src="app.js"></script>', '<script src="app.js"></script>\n<script src="samples.js"></script>\n<script src="analytics.js"></script>');
+  if (withSamples) html = replaceOnce(html, '<meta name="theme-color" content="#101216">',
+    '<meta name="theme-color" content="#101216">\n<meta name="burst-samples" content="1">');
+  html = replaceOnce(html, '<script src="app.js"></script>',
+    '<script src="app.js"></script>\n<script src="samples.js"></script>\n<script src="analytics.js"></script>\n<script src="pwa.js"></script>');
   return html;
 }
 
 const SAMPLE_NOTE = 'Sample: 8 shots of a canyon, Sony A6000, 20 mm, f/11, ISO 100, camera braced. Click Merge.';
+
+// Stamps the service worker with the build id and the list of shell files to
+// precache, so an installed app can open offline. samples/ is intentionally
+// not precached: the "Try a sample burst" button fetches it and the worker
+// caches it on first use.
+function stampServiceWorker(out) {
+  const sw = path.join(out, 'sw.js');
+  let text = fs.readFileSync(sw, 'utf8');
+  const shell = fs.readdirSync(out)
+    .filter((n) => !n.startsWith('.') && n !== 'sw.js' && n !== 'samples' && fs.statSync(path.join(out, n)).isFile())
+    .map((n) => JSON.stringify('./' + n));
+  text = text.replace("'__BUILD__'", JSON.stringify(process.env.GITHUB_SHA || require('crypto')
+    .createHash('sha1').update(shell.join('|')).digest('hex').slice(0, 12)));
+  text = text.replace(/\/\*__SHELL__\*\/\s*\[[\s\S]*?\]\s*\/\*__SHELL__\*\//, () => '/*__SHELL__*/[' + shell.join(', ') + ']/*__SHELL__*/');
+  if (text.includes('__BUILD__') || (text.match(/__SHELL__/g) || []).length !== 2) throw new Error('build-web: could not stamp sw.js');
+  fs.writeFileSync(sw, text);
+}
 
 function addSamples(dir, out) {
   const files = fs.readdirSync(dir).filter((n) => /\.jpe?g$/i.test(n)).sort();
@@ -73,11 +96,16 @@ function build(out = defaultOut, samples = samplesDir) {
     if (name === 'index.html') continue;
     fs.copyFileSync(path.join(front, name), path.join(out, name));
   }
-  for (const name of fs.readdirSync(path.join(root, 'src/web'))) fs.copyFileSync(path.join(root, 'src/web', name), path.join(out, name));
+  for (const name of fs.readdirSync(path.join(root, 'src/web'))) {
+    const from = path.join(root, 'src/web', name);
+    if (fs.statSync(from).isDirectory()) fs.cpSync(from, path.join(out, name), { recursive: true });
+    else fs.copyFileSync(from, path.join(out, name));
+  }
   fs.copyFileSync(path.join(root, 'icon.png'), path.join(out, 'icon.png'));
-  fs.writeFileSync(path.join(out, 'index.html'), webIndex(fs.readFileSync(path.join(front, 'index.html'), 'utf8')));
+  fs.writeFileSync(path.join(out, 'index.html'), webIndex(fs.readFileSync(path.join(front, 'index.html'), 'utf8'), !!samples));
   fs.writeFileSync(path.join(out, '.nojekyll'), '');
   if (samples) addSamples(samples, out);
+  stampServiceWorker(out);
   return out;
 }
 

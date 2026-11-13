@@ -75,6 +75,45 @@ function createExif() {
     return out;
   }
 
+  // Camera, lens and exposure from an APP1 payload, for the info line under
+  // the compare view: { make, model, lensModel, iso, exposureTime [n,d],
+  // fNumber [n,d], focalLength [n,d], time (seconds) }, empty/missing as null.
+  function cameraInfo(payload) {
+    if (!payload || payload.length < 14) return null;
+    const p = payload, t = 6, le = p[t] === 0x49;
+    if (!le && p[t] !== 0x4d) return null;
+    const u16 = (o) => (le ? p[o] | (p[o + 1] << 8) : (p[o] << 8) | p[o + 1]);
+    const u32 = (o) => (le ? (p[o] | (p[o + 1] << 8) | (p[o + 2] << 16) | (p[o + 3] << 24)) >>> 0
+      : ((p[o] << 24) | (p[o + 1] << 16) | (p[o + 2] << 8) | p[o + 3]) >>> 0);
+    const out = {};
+    const str = (e) => {
+      const n = u32(e + 4), at = n <= 4 ? e + 8 : t + u32(e + 8), s = [];   // 4 bytes or less are inline
+      for (let i = 0; i < n && at + i < p.length && p[at + i]; i++) s.push(String.fromCharCode(p[at + i]));
+      return s.join('').trim();
+    };
+    const rat = (e) => { const off = t + u32(e + 8); return off + 8 <= p.length ? [u32(off), u32(off + 4)] : null; };
+    const walk = (ifd, fn) => {
+      const base = t + ifd;
+      if (base + 2 > p.length) return;
+      for (let i = 0, n = u16(base); i < n; i++) { const e = base + 2 + i * 12; if (e + 12 > p.length) return; fn(u16(e), e); }
+    };
+    walk(u32(t + 4), (tag, e) => {
+      if (tag === 0x010f) out.make = str(e);
+      else if (tag === 0x0110) out.model = str(e);
+      else if (tag === 0x0132 && !out.dateTimeOriginal) out.dateTimeOriginal = str(e);
+      else if (tag === 0x8769) walk(u32(e + 8), (t2, e2) => {
+        if (t2 === 0x9003) out.dateTimeOriginal = str(e2);
+        else if (t2 === 0x829a) out.exposureTime = rat(e2);
+        else if (t2 === 0x829d) out.fNumber = rat(e2);
+        else if (t2 === 0x8827) out.iso = u16(e2 + 8);
+        else if (t2 === 0x920a) out.focalLength = rat(e2);
+        else if (t2 === 0xa434) out.lensModel = str(e2);
+      });
+    });
+    out.time = captureTime(payload);
+    return out;
+  }
+
   // DateTimeOriginal (or DateTime) from an APP1 payload, as seconds, or null.
   function captureTime(payload) {
     if (!payload || payload.length < 14) return null;
@@ -198,7 +237,7 @@ function createExif() {
     return app1 ? insertApp1(target, patchApp1(app1, size)) : target;
   }
 
-  return { extractApp1, patchApp1, insertApp1, insertPngExif, crc32, copyExif, captureTime, buildApp1 };
+  return { extractApp1, patchApp1, insertApp1, insertPngExif, crc32, copyExif, captureTime, cameraInfo, buildApp1 };
 }
 
 if (typeof module === 'object' && module.exports) module.exports = createExif();
