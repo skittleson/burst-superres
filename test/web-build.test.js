@@ -16,6 +16,7 @@ test('web build: the desktop page plus the web parts', () => {
   assert.doesNotMatch(html, /data-url=/);
   assert.match(html, /<link rel="manifest" href="manifest.webmanifest">/);
   assert.match(html, /<link rel="apple-touch-icon"/);
+  assert.match(html, /href="https:\/\/docodethatmatters\.com\/burst-superres\/"/, 'link back to the blog post');
 });
 
 test('web build: writes every file the page loads', () => {

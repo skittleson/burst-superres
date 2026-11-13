@@ -11,6 +11,7 @@ const RAWF = createRaw();
 const VERSION = '0.4.0';
 const GUIDE_URL = 'https://dctmlab.taila665d5.ts.net/';
 const SITE_URL = 'https://docodethatmatters.com/';
+const BLOG_URL = 'https://docodethatmatters.com/burst-superres/';
 const IMAGE_EXT = /\.(jpe?g|png|arw)$/i;
 const RAW_DIRECT_MIN = 6;          // raw bursts this size or larger merge straight from the sensor samples (measured: tools/bench-raw.js)
 const MAX_PHOTOS = 8;
@@ -932,7 +933,8 @@ document.addEventListener('drop', () => showDragOverlay(false));
 function about() {
   tiny.dialog.alert(`Burst Super-Res ${VERSION}`,
     'Merges a burst of photos of a still scene into one image with twice the width and height.\n\n' +
-    'Free tool from the Sony A6000/A6400 Hacking Guide (chapter 7, "Super-resolution from a burst") by Do Code That Matters.');
+    'Free tool from the Sony A6000/A6400 Hacking Guide (chapter 7, "Super-resolution from a burst") by Do Code That Matters.\n\n' +
+    `How it works and why it helps: ${BLOG_URL}`);
 }
 
 tiny.menu.set([
@@ -943,6 +945,7 @@ tiny.menu.set([
     { id: 'savePng', label: 'Save as PNG…' },
   ] },
   { title: 'Help', items: [
+    { id: 'post', label: 'The Blog Post Behind This' },
     { id: 'about', label: 'About Burst Super-Res' },
     { id: 'guide', label: 'Sony A6000/A6400 Hacking Guide' },
     { id: 'site', label: 'docodethatmatters.com' },
@@ -953,6 +956,7 @@ tiny.menu.on((id) => {
   else if (id === 'openFolder') pickFolder();
   else if (id === 'saveJpg') save('jpg');
   else if (id === 'savePng') save('png');
+  else if (id === 'post') tiny.app.shell.open(BLOG_URL);
   else if (id === 'about') about();
   else if (id === 'guide') tiny.app.shell.open(GUIDE_URL);
   else if (id === 'site') tiny.app.shell.open(SITE_URL);

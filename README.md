@@ -2,6 +2,8 @@
 
 **Merge a burst of photos of the same scene into one image with twice the width and height.** A small, free desktop app for macOS, Windows and Linux, from the [Sony A6000/A6400 Hacking Guide](https://dctmlab.taila665d5.ts.net/) by [Do Code That Matters](https://docodethatmatters.com/).
 
+Want the story behind it — how the merge works and what it really buys you over upscaling one photo? Read **[I Built Photo Super-Resolution Without AI](https://docodethatmatters.com/burst-superres/)**.
+
 **[Try it now in your browser](https://skittleson.github.io/burst-superres/)**: nothing to install, and your photos are never uploaded. Or [download the desktop app](#download). No burst of your own yet? Click **Try a sample burst** on the page, or get the [sample photos](https://github.com/skittleson/burst-superres/releases/tag/sample-photos) (8 camera JPEGs, `sample-canyon-burst.zip`) for the desktop app.
 
 ![Burst Super-Res merging a real 8-shot Sony A6000 burst, with the before/after slider](docs/media/app-real-burst.jpg)
@@ -28,6 +30,8 @@ Use desktop Chrome, Edge or Firefox. A full-size merge needs a few GB of memory,
 The web version is a PWA: on a phone or desktop, use the browser's **Install** prompt to add it to your home screen or apps. Once installed it opens offline (the app itself is cached; the sample burst needs one download first).
 
 The web version (not the desktop app) counts visits and merges with Google Analytics: photo count, size, JPEG or RAW, method, merge time, alignment results and saves. It never sends file names, EXIF or pixels. In European time zones it asks first, and the **Usage stats** link in the footer turns it off.
+
+Curious how this works under the hood, and how much a burst really gains over upscaling one photo? The full build story is on the blog: **[I Built Photo Super-Resolution Without AI](https://docodethatmatters.com/burst-superres/)**.
 
 ## Download
 
