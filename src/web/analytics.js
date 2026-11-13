@@ -19,7 +19,7 @@
     window.dataLayer = window.dataLayer || [];
     window.gtag = function gtag() { window.dataLayer.push(arguments); };
     window.gtag('js', new Date());
-    window.gtag('config', ID, { linker: { domains: ['docodethatmatters.com', 'dctmlab.taila665d5.ts.net'] } });
+    window.gtag('config', ID, { linker: { domains: ['docodethatmatters.com'] } });
     const s = document.createElement('script');
     s.async = true;
     s.src = 'https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(ID);

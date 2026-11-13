@@ -1,6 +1,6 @@
 # Burst Super-Res
 
-**Merge a burst of photos of the same scene into one image with twice the width and height.** A small, free desktop app for macOS, Windows and Linux, from the [Sony A6000/A6400 Hacking Guide](https://dctmlab.taila665d5.ts.net/) by [Do Code That Matters](https://docodethatmatters.com/).
+**Merge a burst of photos of the same scene into one image with twice the width and height.** A small, free desktop app for macOS, Windows and Linux, from the Sony A6000/A6400 Hacking Guide by [Do Code That Matters](https://docodethatmatters.com/).
 
 Want the story behind it — how the merge works and what it really buys you over upscaling one photo? Read **[I Built Photo Super-Resolution Without AI](https://docodethatmatters.com/burst-superres/)**.
 
