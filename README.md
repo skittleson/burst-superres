@@ -2,6 +2,8 @@
 
 **Merge a burst of photos of the same scene into one image with twice the width and height.** A small, free desktop app for macOS, Windows and Linux, from the [Sony A6000/A6400 Hacking Guide](https://dctmlab.taila665d5.ts.net/) by [Do Code That Matters](https://docodethatmatters.com/).
 
+**[Try it now in your browser](https://skittleson.github.io/burst-superres/)**: nothing to install, and your photos are never uploaded. Or [download the desktop app](#download).
+
 ![Burst Super-Res merging a real 8-shot Sony A6000 burst, with the before/after slider](docs/media/app-real-burst.jpg)
 
 *A real 8-shot A6000 burst of a canyon, dropped in as a folder. Every shot aligned to 0.22 px or better (5 of them with the handheld correction). Left of the slider: one photo upscaled 2x. Right: the mean of all 8.*
