@@ -71,7 +71,7 @@ if (typeof module === 'undefined' && globalThis.ImageCapture &&
   (() => {
     const COUNT_KEY = '***';
     const count0 = Math.max(4, Math.min(8, +(localStorage.getItem(COUNT_KEY) || 6) || 6));
-    let cam = null, burstCount = count0;
+    let cam = null, burstCount = count0, cancelRequested = false;
 
     const overlay = document.createElement('div');
     overlay.id = 'camOverlay';
@@ -113,12 +113,14 @@ if (typeof module === 'undefined' && globalThis.ImageCapture &&
     }
 
     async function shoot() {
-      $('camShutter').disabled = $('camCancel').disabled = true;
+      $('camShutter').disabled = true;
       const t0 = performance.now();
+      cancelRequested = false;
       window.dispatchEvent(new CustomEvent('camera-shoot', { detail: { count: burstCount } }));
       try {
         await cam.lockExposure();
-        for (let n = 3; n >= 1; n--) { setStatus(n + '…'); await new Promise((ok) => setTimeout(ok, 500)); }
+        for (let n = 3; n >= 1 && !cancelRequested; n--) { setStatus(n + '…'); await new Promise((ok) => setTimeout(ok, 500)); }
+        if (cancelRequested) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' });
         const r = await cam.shootBurst({ count: burstCount, onShot: (i, total) => setStatus(`Shot ${i} of ${total}`) });
         cam.close(); cam = null;
         overlay.hidden = true;
@@ -127,13 +129,15 @@ if (typeof module === 'undefined' && globalThis.ImageCapture &&
         await addPaths(tiny.addFiles(r.files));
         runMerge();
       } catch (e) {
-        const cancelled = e && e.name === 'AbortError';
+        const cancelled = e && e.name === 'AbortError';   // the Cancel button owns that event
         if (cam) { cam.close(); cam = null; }
         overlay.hidden = true;
-        window.dispatchEvent(new CustomEvent('camera-end', { detail: { ok: false, code: cancelled ? 'cancelled' : 'shot_error', shots: 0, failed: burstCount, ms: Math.round(performance.now() - t0) } }));
-        if (!cancelled) window.setStatus('Only ' + (e && e.min ? 'one' : 'no') + ' shot came out. Try again, holding steadier.', true);
+        if (!cancelled) {
+          window.dispatchEvent(new CustomEvent('camera-end', { detail: { ok: false, code: 'shot_error', shots: 0, failed: burstCount, ms: Math.round(performance.now() - t0) } }));
+          window.setStatus('Only ' + (e && e.min ? 'one' : 'no') + ' shot came out. Try again, holding steadier.', true);
+        }
       } finally {
-        $('camShutter').disabled = $('camCancel').disabled = false;
+        $('camShutter').disabled = false;
       }
     }
 
@@ -142,6 +146,7 @@ if (typeof module === 'undefined' && globalThis.ImageCapture &&
       if (c) { burstCount = +c.dataset.n; try { localStorage.setItem(COUNT_KEY, burstCount); } catch { /* not persisted */ } renderCounts(); return; }
       if (e.target === $('camShutter')) shoot();
       else if (e.target === $('camCancel')) {
+        cancelRequested = true;
         if (cam) { cam.abort(); cam.close(); cam = null; }
         overlay.hidden = true;
         window.dispatchEvent(new CustomEvent('camera-end', { detail: { ok: false, code: 'cancelled', shots: 0, failed: 0, ms: 0 } }));

@@ -422,7 +422,7 @@ The code uses no platform-only APIs. `Uint8Array.prototype.toBase64` has a fallb
 - Test an A6400 ARW, and add Sony's lossless-compressed ARW.
 - Speed: RAW decoding, sharpness measuring and sharpening are still single-threaded; WebGL is untried.
 - Detail-aware (edge-stretched) kernels for the sensor-sample merge, as in Wronski et al.; this version uses round ones.
-- PWA scene guides shipped (Landscape, Night, Handheld). Next: more scenes (city, astro), and a first-visit prompt to pick one.
+- PWA scene guides shipped (Landscape, Night, Handheld). Camera burst capture shipped (phone PWA: rear camera, 4–8 frames, auto-merge) pending real-phone verification on an S25. Next: more scenes (city, astro), and a first-visit prompt to pick one.
 
 ## Credit
 

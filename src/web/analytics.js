@@ -77,6 +77,10 @@
   // scene picker: which guide people choose before shooting (no other data)
   window.addEventListener('scene-select', (e) => send('scene_select', { scene: e.detail.scene }));
 
+  // camera capture: counts, timing, fixed error codes; never pixels
+  window.addEventListener('camera-shoot', (e) => send('capture_start', { count: e.detail.count }));
+  window.addEventListener('camera-end', (e) => send('capture_end', { ok: e.detail.ok, shots: e.detail.shots, failed: e.detail.failed, ms: e.detail.ms, code: e.detail.code }));
+
   // fixed reason codes, so no file name or other text from the page is sent
   const REASONS = [[/same size/, 'mixed_sizes'], [/RAW files or JPEG/, 'mixed_types'], [/MP are supported/, 'too_large'],
     [/lined up closely/, 'no_alignment'], [/Cancelled/, 'cancelled'], [/Could not read/, 'read_error'], [/Worker error/, 'worker_error']];
