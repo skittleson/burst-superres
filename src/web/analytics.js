@@ -74,6 +74,9 @@
   document.getElementById('merge').addEventListener('click', startMerge, true);
   document.getElementById('remerge').addEventListener('click', startMerge, true);
 
+  // scene picker: which guide people choose before shooting (no other data)
+  window.addEventListener('scene-select', (e) => send('scene_select', { scene: e.detail.scene }));
+
   // fixed reason codes, so no file name or other text from the page is sent
   const REASONS = [[/same size/, 'mixed_sizes'], [/RAW files or JPEG/, 'mixed_types'], [/MP are supported/, 'too_large'],
     [/lined up closely/, 'no_alignment'], [/Cancelled/, 'cancelled'], [/Could not read/, 'read_error'], [/Worker error/, 'worker_error']];

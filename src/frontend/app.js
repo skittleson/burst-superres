@@ -7,6 +7,7 @@ const SR = createSRCore();
 const EXIF = createExif();
 const BURSTS = createBursts();
 const RAWF = createRaw();
+const SCENES = createScenes();
 
 const VERSION = '0.4.0';
 const SITE_URL = 'https://docodethatmatters.com/';
@@ -961,6 +962,35 @@ tiny.menu.on((id) => {
 
 renderList();
 updateHints();
+
+// ---------- scene guides ----------
+// Chips pick a scene; the guide replaces the generic steps until cleared.
+// Remembered so the app opens on the scene you shoot. The chips show only
+// in the web build (style.css hides them; web.css shows them).
+function renderSceneChips(active) {
+  $('sceneChips').innerHTML = SCENES.SCENES.map((s) =>
+    `<button class="scene-chip${s.id === active ? ' on' : ''}" data-scene="${s.id}" title="${esc(s.pitch)}" ` +
+    `aria-pressed="${s.id === active}">${esc(s.label)}</button>`).join('') +
+    (active ? '<button class="scene-chip clear" data-scene="" aria-pressed="false">General</button>' : '');
+}
+function applyScene(id) {
+  const g = $('sceneGuide');
+  renderSceneChips(id);
+  if (id) {
+    g.innerHTML = SCENES.guideHtml(id);
+    g.hidden = false; $('howtoSteps').hidden = true;
+  } else {
+    g.hidden = true; g.innerHTML = ''; $('howtoSteps').hidden = false;
+  }
+}
+$('sceneChips').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-scene]');
+  if (!b) return;
+  applyScene(b.dataset.scene);
+  stored.set('scene', b.dataset.scene || '');
+  window.dispatchEvent(new CustomEvent('scene-select', { detail: { scene: b.dataset.scene || 'general' } }));
+});
+applyScene(stored.get('scene') || '');
 
 // Smoke test: BURST_SELFTEST='{"photos":[...],"mode":"mean","compare":true,"out":"/tmp/x.jpg","focus":[x,y],
 // "split":50,"layout":"side","compareSel":"methods","untick":[2],"fullscreen":true,"holdMs":8000}'

@@ -83,6 +83,33 @@ The macOS and Windows apps are not code-signed by Apple or Microsoft: that needs
 
 Changing the ticked photos or the method shows **Settings changed since this merge**. **Merge again** reuses the aligned photos, so it skips reading and aligning. **Cancel** stops a merge at any time.
 
+## Scene guides
+
+### Night
+
+Merging a burst is at its best on night shots, because the biggest gain — noise reduction — matters most when the noise is worst. Averaging N frames cuts noise by about the square root of N: 8 frames drop it to roughly a third, around **1.5 stops for free**.
+
+So instead of one long exposure at a high ISO, shoot a short burst at a lower ISO:
+
+- **8 short frames beat 1 long one.** Try 8 x 1/4 s at ISO 3200 instead of 2 s at ISO 12800. The merge comes out as clean as the long exposure, but you can handheld it and freeze slight motion.
+- **Shoot RAW (ARW) when you can.** With 6+ RAW files the merge runs on the raw sensor samples before demosaicing, and sharpening is picked automatically. Biggest quality gain for the same effort.
+- **Use Median when something moves.** People, birds, traffic, swaying grass: Mean gives the cleanest noise, Median drops the movers outright.
+- **Lock exposure and focus** (manual, or AE/AF-lock) so the frames stay consistent.
+- **Keep per-frame ISO moderate.** Very high ISO adds fixed-pattern banding that is identical in every frame, so averaging cannot remove it. The burst lets you stay at a moderate ISO, which avoids that.
+
+The result is a final JPEG or PNG (EXIF carries over), not a RAW file to recover further in Lightroom.
+
+### Landscape
+
+This is what the tool was built for: a still scene, a tripod, and a real 2x resolution gain.
+
+- **Tripod, or brace the camera.** Landscapes hold perfectly still, so alignment is easy and the sub-pixel shifts between handheld frames become detail instead of trouble. A cable release or self-timer avoids shake on long glass.
+- **RAW, 6+ frames, base ISO.** On a tripod you lose nothing by shooting low and slow: the merge runs on raw sensor samples, sharpening is picked automatically, and noise is already near zero — the result is mostly extra detail.
+- **Slight hand movement is a feature.** Nudge the camera a millimetre or two between frames (or just handheld it): the different sub-pixel positions are what feed extra resolution. Pixel-identical frames only denoise, and the app tells you when that happens.
+- **f/8 to f/11, focus where the detail matters.** Diffraction limits how much real detail the lens resolves; the merge cannot add detail the optics never captured.
+- **Median for moving elements.** Waves, clouds and grass never gain detail from any method — Median at least removes them cleanly from the merge instead of ghosting.
+- **What to expect:** less noise and cleaner fine edges at 2x, not 4x the detail. Check the split view at 200% before saving.
+
 ## Examples
 
 ### A real steady burst: it works
@@ -395,6 +422,7 @@ The code uses no platform-only APIs. `Uint8Array.prototype.toBase64` has a fallb
 - Test an A6400 ARW, and add Sony's lossless-compressed ARW.
 - Speed: RAW decoding, sharpness measuring and sharpening are still single-threaded; WebGL is untried.
 - Detail-aware (edge-stretched) kernels for the sensor-sample merge, as in Wronski et al.; this version uses round ones.
+- PWA scene guides shipped (Landscape, Night, Handheld). Next: more scenes (city, astro), and a first-visit prompt to pick one.
 
 ## Credit
 
