@@ -1,6 +1,6 @@
 # Burst Super-Res
 
-**Merge a burst of photos of the same scene into one image with twice the width and height.** A small, free desktop app for macOS, Windows and Linux, from the Sony A6000/A6400 Hacking Guide by [Do Code That Matters](https://docodethatmatters.com/).
+**Merge a burst of photos of the same scene into one image with twice the width and height.** A small, free app for macOS, Windows, Linux and the browser — on a phone it can shoot the burst for you — from the Sony A6000/A6400 Hacking Guide by [Do Code That Matters](https://docodethatmatters.com/).
 
 Want the story behind it — how the merge works and what it really buys you over upscaling one photo? Read **[I Built Photo Super-Resolution Without AI](https://docodethatmatters.com/burst-superres/)**.
 
@@ -20,16 +20,21 @@ Want the story behind it — how the merge works and what it really buys you ove
 - **Optional sharpening after the merge.** A gentle deconvolution, off for camera JPEGs and automatic for RAW (it picks the amount that best predicts a photo left out of the merge).
 - **Brightness matching.** Exposure flicker between shots is measured per photo and colour and evened out before merging.
 - **Private and offline.** Your photos never leave your computer. No account, no upload, no nag screen.
+- **On a phone, it can take the burst.** Rear camera, exposure locked, 4 to 8 frames, auto-merge. Lens chooser and a 50 MP "Max res" mode where the browser exposes them.
 
 ## Use it in your browser
 
 **[skittleson.github.io/burst-superres](https://skittleson.github.io/burst-superres/)** runs the same app as a web page, with nothing to install. It is the same code as the desktop app: the merge, RAW support, badges, compare view and EXIF all work the same way. Your photos are read inside the browser tab and are never uploaded.
 
-Use desktop Chrome, Edge or Firefox. A full-size merge needs a few GB of memory, so phones and tablets may run out; for 24 MP bursts the desktop app is the safer choice. In Chrome and Edge, **Save** opens a save dialog; other browsers download the file instead.
+Works in desktop Chrome, Edge or Firefox, and on Android Chrome. A full-size merge needs a few GB of memory, so phones and tablets may run out; for 24 MP bursts the desktop app is the safer choice. In Chrome and Edge, **Save** opens a save dialog; other browsers download the file instead.
 
-The web version is a PWA: on a phone or desktop, use the browser's **Install** prompt to add it to your home screen or apps. Once installed it opens offline (the app itself is cached; the sample burst needs one download first).
+On a phone, the web app can also **take the burst for you**: tap **Shoot a burst with the camera** (or "Shoot a night burst" in the Night guide), pick 4 to 8 frames, tap the shutter — the app locks exposure and focus, counts 3-2-1, shoots full-resolution stills with the rear camera and merges them automatically. If your phone reports several rear lenses, you get a lens chooser, and **Max res** takes the largest still size your camera exposes (your 50 MP sensor, where the browser can reach it) with the burst capped at 4 frames so it still fits a phone's memory. Camera capture needs Chrome (Android or desktop); iOS Safari has no ImageCapture API, so the button does not appear there and everything else still works.
 
-The web version (not the desktop app) counts visits and merges with Google Analytics: photo count, size, JPEG or RAW, method, merge time, alignment results and saves. It never sends file names, EXIF or pixels. In European time zones it asks first, and the **Usage stats** link in the footer turns it off.
+Scene guides (Landscape, Night, Handheld) sit under the drop zone: pick your scene, get shooting tips and honest expectations for it.
+
+The web version is a PWA: on a phone or desktop, use the browser's **Install** prompt to add it to your home screen or apps. Once installed it opens offline (the app itself is cached; the sample burst needs one download first; camera capture needs no special connection beyond permission).
+
+The web version (not the desktop app) counts visits and merges with Google Analytics: photo count, size, JPEG or RAW, method, merge time, alignment results, saves, the scene guide you pick, and camera captures (frame counts, timing and error codes only). It never sends file names, EXIF or pixels. In European time zones it asks first, and the **Usage stats** link in the footer turns it off.
 
 Curious how this works under the hood, and how much a burst really gains over upscaling one photo? The full build story is on the blog: **[I Built Photo Super-Resolution Without AI](https://docodethatmatters.com/burst-superres/)**.
 
@@ -109,6 +114,15 @@ This is what the tool was built for: a still scene, a tripod, and a real 2x reso
 - **f/8 to f/11, focus where the detail matters.** Diffraction limits how much real detail the lens resolves; the merge cannot add detail the optics never captured.
 - **Median for moving elements.** Waves, clouds and grass never gain detail from any method — Median at least removes them cleanly from the merge instead of ghosting.
 - **What to expect:** less noise and cleaner fine edges at 2x, not 4x the detail. Check the split view at 200% before saving.
+
+### Handheld
+
+No tripod: expect denoising more than detail.
+
+- **Hold the camera against something**, exhale, shoot in continuous mode. The app corrects shifts and slight rotation for the whole photo, and a local correction handles handheld parallax.
+- **Short exposures freeze the wobble** better than long ones: at night, raise ISO a little rather than slowing the shutter.
+- **Big movements end up soft.** If a photo is badged "Too far off" the app unticks it; keep 4 or more that line up.
+- **Wide lenses align better than long ones** — lens parallax limits handheld detail.
 
 ## Examples
 
@@ -375,7 +389,7 @@ npm run bench -- --gt path/to/photo.jpg --crop 400,1400,800,500 --rot 0.5
 
 The benchmark needs `djpeg` and `cjpeg` (libjpeg-turbo) on the PATH. I do not use jpeg-js, because its decoder truncates instead of rounding. That shifts every pixel by -0.53 levels per round trip and skews PSNR.
 
-`tools/before-after.py` (needs Pillow) makes the labelled comparison image from a benchmark run, or from two crops with `--before` and `--after`.
+`tools/before-after.py` (needs Pillow) makes the labelled comparison image from a benchmark run, or from two crops with `--before` and `--after`. `tools/make-icons.js` rebuilds the app and PWA icons from the header's aperture SVG (headless Chrome).
 
 `tools/ui-preview/serve.js` serves the real frontend to a normal browser, with a stand-in for the tinyjs bridge, for docs screenshots. The screenshots in this README come from it, rendered in headless Chromium at 1280 x 820 (2x). They show the same HTML, CSS and JavaScript as the app, without the native window frame. The URL hash takes the same JSON as `BURST_SELFTEST`.
 
@@ -386,7 +400,7 @@ node tools/build-web.js            # writes dist/web
 python3 -m http.server -d dist/web # then open http://localhost:8000/
 ```
 
-The web build copies `src/frontend` unchanged and adds `src/web/tiny-web.js`, a stand-in for the tinyjs bridge built on browser APIs: file and folder pickers, drag and drop, `File.slice()` for the header reads, and a save dialog (Chromium) or download for the output. `src/web/web.css` lets the layout scroll in small windows. `index.html` gets a "Get the desktop app" link, a memory note and web wording in the footer; the build fails if those edits stop matching. `.github/workflows/pages.yml` publishes it to GitHub Pages on every `v*` tag, alongside the desktop release, or by hand with workflow_dispatch. It also downloads the JPEGs from the `sample-photos` release and builds with `--samples`, which adds the **Try a sample burst** button (the photos are not in git; their Sony maker notes, which hold the camera's internal serial number, were stripped). Pages must be set to **Source: GitHub Actions** in the repository settings.
+The web build copies `src/frontend` unchanged and adds `src/web/tiny-web.js`, a stand-in for the tinyjs bridge built on browser APIs: file and folder pickers, drag and drop, `File.slice()` for the header reads, and a save dialog (Chromium) or download for the output. `src/web/camera.js` is the phone camera capture (overlay over ImageCapture, sequenced by the same injectable core that `test/camera.test.js` runs); it activates only where ImageCapture and a coarse pointer exist. `src/web/web.css` lets the layout scroll in small windows. `index.html` gets a "Get the desktop app" link, a memory note and web wording in the footer; the build fails if those edits stop matching. `.github/workflows/pages.yml` publishes it to GitHub Pages on every `v*` tag, alongside the desktop release, or by hand with workflow_dispatch. It also downloads the JPEGs from the `sample-photos` release and builds with `--samples`, which adds the **Try a sample burst** button (the photos are not in git; their Sony maker notes, which hold the camera's internal serial number, were stripped). Pages must be set to **Source: GitHub Actions** in the repository settings.
 
 Checked in headless Chrome: 8 x 3000 x 2000 JPEGs through the file picker (6.4 s, all Good), 6 synthetic ARWs through the folder picker (direct sensor merge, 4.7 s, EXIF kept), drag and drop, the mixed-size error, and saving as a download.
 
@@ -409,7 +423,7 @@ It adds the photos, merges, renders the compare view, saves, writes a report to 
 | Linux ARM64 (tarball and AppImage) | Built by GitHub Actions on Ubuntu 22.04. **Not tested.** |
 | macOS 15+ (universal) | Built by GitHub Actions (`tinyjs publish --universal`). Ad-hoc signed, not notarized. **Not tested.** |
 | Windows 10/11 x64 | Built by GitHub Actions (`tinyjs.cmd publish`). Not code-signed. **Not tested.** Check the Blob-URL worker and saving in WebView2 first. |
-| Web (GitHub Pages) | Tested in headless Chrome (file and folder pickers, drop, JPEG and RAW merges, download). Firefox, Safari and the Chromium save dialog **not tested**. |
+| Web (GitHub Pages) | Tested in headless Chrome (file and folder pickers, drop, JPEG and RAW merges, download) and on a Galaxy S25 in the field (camera burst, merge). Firefox, Safari and the Chromium save dialog **not tested**. |
 
 Releases come from `.github/workflows/release.yml`. Push a tag like `v0.4.0` to build every platform (plus Linux AppImages) and publish them with checksums, a GPG signature (repository secret `GPG_PRIVATE_KEY`; skipped if it is not set) and build attestations.
 
@@ -422,7 +436,8 @@ The code uses no platform-only APIs. `Uint8Array.prototype.toBase64` has a fallb
 - Test an A6400 ARW, and add Sony's lossless-compressed ARW.
 - Speed: RAW decoding, sharpness measuring and sharpening are still single-threaded; WebGL is untried.
 - Detail-aware (edge-stretched) kernels for the sensor-sample merge, as in Wronski et al.; this version uses round ones.
-- PWA scene guides shipped (Landscape, Night, Handheld). Camera burst capture shipped (phone PWA: rear camera, 4–8 frames, auto-merge) pending real-phone verification on an S25. Next: more scenes (city, astro), and a first-visit prompt to pick one.
+- More scene guides (city, astro), and a first-visit prompt to pick one.
+- Camera capture: verify Max res actually reaches the 50 MP still on more phones (it worked on a Galaxy S25); iOS has no ImageCapture, so it stays Chrome-only unless a fallback is worth building.
 
 ## Credit
 
