@@ -964,9 +964,9 @@ renderList();
 updateHints();
 
 // ---------- scene guides ----------
-// Chips pick a scene; the guide replaces the generic steps until cleared.
-// Remembered so the app opens on the scene you shoot. The chips show only
-// in the web build (style.css hides them; web.css shows them).
+// Chips pick a scene; its guide shows under the chips, above the settings.
+// Remembered so the app opens on the scene you shoot. The picker shows only
+// in the web build (style.css hides it; web.css shows it).
 function renderSceneChips(active) {
   $('sceneChips').innerHTML = SCENES.SCENES.map((s) =>
     `<button class="scene-chip${s.id === active ? ' on' : ''}" data-scene="${s.id}" title="${esc(s.pitch)}" ` +
@@ -978,9 +978,9 @@ function applyScene(id) {
   renderSceneChips(id);
   if (id) {
     g.innerHTML = SCENES.guideHtml(id);
-    g.hidden = false; $('howtoSteps').hidden = true;
+    g.hidden = false;
   } else {
-    g.hidden = true; g.innerHTML = ''; $('howtoSteps').hidden = false;
+    g.hidden = true; g.innerHTML = '';
   }
 }
 $('sceneChips').addEventListener('click', (e) => {

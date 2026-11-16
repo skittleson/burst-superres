@@ -21,8 +21,11 @@ header .get-app { margin-left: auto; font-size: 13px; white-space: nowrap; }
 .drop button.sample { background: none; border: none; color: var(--accent); padding: 0; font-size: 13px; }
 .drop button.sample:hover:not(:disabled) { background: none; text-decoration: underline; }
 
-/* Scene picker: chips choose a scene, the guide replaces the generic steps. */
-.howto .scene-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 14px; }
+/* Scene picker: chips choose a scene, its guide shows right below. Sits
+ * between the drop zone and the settings, so guidance comes before merging. */
+.scene-pick { display: block; margin-top: 14px; }
+.scene-title { font-size: 12.5px; font-weight: 600; color: var(--text-dim); margin-bottom: 7px; }
+.scene-chips { display: flex; flex-wrap: wrap; gap: 7px; }
 .scene-chip {
   font-size: 12.5px; padding: 5px 12px; border-radius: 999px;
   background: var(--sunken); border: 1px solid var(--line-soft); color: var(--text-dim);
@@ -30,11 +33,11 @@ header .get-app { margin-left: auto; font-size: 13px; white-space: nowrap; }
 .scene-chip:hover:not(:disabled) { border-color: var(--accent); color: var(--text); background: var(--sunken); }
 .scene-chip.on { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .scene-chip.clear { color: var(--muted); }
-.scene-guide { display: block; }
+.scene-guide { margin-top: 11px; font-size: 12.5px; color: #c6cad2; background: var(--sunken); border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: 10px 13px; }
 .scene-guide[hidden] { display: none; }
-.scene-tips { padding-left: 18px; display: flex; flex-direction: column; gap: 7px; margin-bottom: 12px; color: #c6cad2; }
+.scene-tips { padding-left: 17px; display: flex; flex-direction: column; gap: 6px; }
 .scene-tips li::marker { color: var(--accent); }
-.scene-expect { font-size: 12.5px; color: var(--text-dim); background: var(--sunken); border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: 8px 12px; margin-bottom: 12px; }
+.scene-expect { margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--line-soft); color: var(--text-dim); }
 
 /* One column below 960px: the page scrolls, the panels stack, and the compare
  * view keeps enough height to be useful on a phone. */
