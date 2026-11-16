@@ -53,7 +53,7 @@ function webIndex(html, withSamples = false) {
   if (withSamples) html = replaceOnce(html, '<meta name="theme-color" content="#101216">',
     '<meta name="theme-color" content="#101216">\n<meta name="burst-samples" content="1">');
   html = replaceOnce(html, '<script src="app.js"></script>',
-    '<script src="app.js"></script>\n<script src="samples.js"></script>\n<script src="analytics.js"></script>\n<script src="pwa.js"></script>');
+    '<script src="app.js"></script>\n<script src="samples.js"></script>\n<script src="camera.js"></script>\n<script src="analytics.js"></script>\n<script src="pwa.js"></script>');
   return html;
 }
 

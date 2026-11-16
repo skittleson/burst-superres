@@ -199,6 +199,7 @@ button.primary:hover:not(:disabled) { background: var(--accent-hi); }
 /* Scene picker is web-only; web.css turns it on. Hidden here so the
    desktop app keeps the plain how-to. */
 .scene-pick { display: none; }
+.scene-shoot { display: none; }
 .howto ol { padding-left: 20px; display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; color: #c6cad2; }
 .howto ol li::marker { color: var(--accent); font-weight: 600; }
 .howto .privacy { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-dim); margin-bottom: 10px; }

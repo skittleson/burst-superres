@@ -23,3 +23,9 @@ test('guideHtml renders the tips of a scene, empty for none', () => {
   assert.equal(guideHtml(''), '');
   assert.equal(guideHtml('nope'), '');
 });
+
+test('only the Night guide offers to shoot a burst', () => {
+  assert.match(guideHtml('night'), /class="scene-shoot"/);
+  assert.doesNotMatch(guideHtml('landscape'), /scene-shoot/);
+  assert.doesNotMatch(guideHtml('handheld'), /scene-shoot/);
+});

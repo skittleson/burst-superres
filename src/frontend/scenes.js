@@ -33,7 +33,7 @@ function createScenes() {
         'Something moving through frame? Pick Median: it drops movers outright instead of ghosting them.',
         'Keep per-frame ISO moderate. Very high ISO adds banding that is identical in every frame, and averaging cannot remove it.',
       ],
-      expect: 'The result is a final JPEG or PNG with your EXIF, not a RAW file to recover further in an editor.',
+      expect: 'The result is a final JPEG or PNG with your EXIF, not a RAW file to recover further in an editor. <button class="scene-shoot">Shoot a night burst</button>',
       mode: null,
     },
     {

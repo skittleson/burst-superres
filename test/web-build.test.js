@@ -10,6 +10,8 @@ test('web build: the desktop page plus the web parts', () => {
   assert.ok(html.indexOf('<script src="tiny-web.js">') < html.indexOf('<script src="app.js">'), 'bridge stand-in loads before the app');
   assert.match(html, /web\.css/);
   assert.ok(html.indexOf('<script src="analytics.js">') > html.indexOf('<script src="app.js">'), 'analytics loads after the app');
+  assert.equal((html.match(/<script src="camera\.js">/g) || []).length, 1, 'camera capture loads once');
+  assert.ok(html.indexOf('<script src="camera.js">') > html.indexOf('<script src="app.js">'), 'camera loads after the app');
   assert.match(html, /Get the desktop app/);
   assert.match(html, /Your photos are never uploaded/);
   assert.doesNotMatch(html, /never leave this computer/);
