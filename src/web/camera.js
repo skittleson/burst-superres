@@ -9,13 +9,18 @@ function createCameraBurst(deps = {}) {
   const ImageCaptureCtor = deps.ImageCaptureCtor || globalThis.ImageCapture;
   const delay = deps.delay || ((ms) => new Promise((ok) => setTimeout(ok, ms)));
 
+  const timeout = deps.timeout || ((ms = 4000) => new Promise((ok) => setTimeout(ok, ms)));
   let stream = null, capture = null, aborted = false;
 
   async function open() {
-    // Some Android builds hang or reject facingMode; retry without it.
+    // Some Android builds hang or reject facingMode; retry without it after
+    // a short timeout, and stop the late stream's tracks so no camera stays
+    // open if the hung request ever resolves.
+    const env = media.getUserMedia({ video: { facingMode: 'environment' } });
     try {
-      stream = await media.getUserMedia({ video: { facingMode: 'environment' } });
+      stream = await Promise.race([env, timeout().then(() => { throw new Error('timeout'); })]);
     } catch {
+      env.then((s) => s.getTracks().forEach((t) => t.stop())).catch(() => {});
       stream = await media.getUserMedia({ video: true });
     }
     capture = new ImageCaptureCtor(stream.getVideoTracks()[0]);
@@ -25,13 +30,20 @@ function createCameraBurst(deps = {}) {
   // Freeze exposure at what the preview settled on, so 6 frames share one
   // exposure. Platforms without manual exposure (iOS Safari) just keep
   // continuous auto-exposure: brightness matching in the merge evens it.
+  // Each lock is its own try: a platform that supports focus but not manual
+  // exposure (or neither) still keeps whatever it can. Continuous auto keeps
+  // the rest, and brightness matching in the merge evens any flicker.
   async function lockExposure() {
+    const track = stream.getVideoTracks()[0];
+    const s = track.getSettings();
     try {
-      const s = stream.getVideoTracks()[0].getSettings();
-      await stream.getVideoTracks()[0].applyConstraints({
+      await track.applyConstraints({
         advanced: [{ exposureMode: 'manual', exposureTime: s.exposureTime, iso: s.iso }],
       });
-    } catch { /* no manual control here: shoot as-is */ }
+    } catch { /* no manual exposure here */ }
+    try {
+      await track.applyConstraints({ advanced: [{ focusMode: 'manual' }] });
+    } catch { /* no manual focus here */ }
   }
 
   async function shootBurst({ count, onShot }) {
@@ -48,7 +60,14 @@ function createCameraBurst(deps = {}) {
       } catch { failed++; }
       await delay(150);
     }
-    if (files.length < 2) { close(); const e = new Error('Too few shots came out'); e.min = true; throw e; }
+    // Cancel may land during the last shot or its pause: honour it.
+    if (aborted) { close(); const e = new Error('Cancelled'); e.name = 'AbortError'; throw e; }
+    if (files.length < 2) {
+      close();
+      const e = new Error('Too few shots came out');
+      e.min = true; e.shots = files.length; e.failed = failed;
+      throw e;
+    }
     return { files, shots: files.length, failed };
   }
 
@@ -60,6 +79,11 @@ function createCameraBurst(deps = {}) {
 
   return { open, close, shootBurst, lockExposure, abort };
 }
+// 4..8 integers pass; anything else (99, 2, 5.5, junk) falls back to 6.
+createCameraBurst.sanitizeCount = (v) => {
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 4 && n <= 8 ? n : 6;
+};
 if (typeof module === 'object' && module.exports) module.exports = createCameraBurst;
 
 // ---------- browser overlay ----------
@@ -69,9 +93,12 @@ if (typeof module === 'object' && module.exports) module.exports = createCameraB
 if (typeof module === 'undefined' && globalThis.ImageCapture &&
     matchMedia('(pointer: coarse)').matches && typeof addPaths === 'function') {
   (() => {
-    const COUNT_KEY = '***';
-    const count0 = Math.max(4, Math.min(8, +(localStorage.getItem(COUNT_KEY) || 6) || 6));
-    let cam = null, burstCount = count0, cancelRequested = false;
+    const readCount = () => {
+      let v = null;
+      try { v = localStorage.getItem('burstCount'); } catch { /* not persisted */ }
+      return createCameraBurst.sanitizeCount(v ?? 6);
+    };
+    let cam = null, burstCount = readCount(), cancelRequested = false, shortfall = 0;
 
     const overlay = document.createElement('div');
     overlay.id = 'camOverlay';
@@ -98,52 +125,71 @@ if (typeof module === 'undefined' && globalThis.ImageCapture &&
     document.getElementById('drop')?.append(openBtn);
 
     async function start() {
-      cam = createCameraBurst();
+      if (cam || state.busy) return;   // no double permission prompt, no opening mid-merge
       try {
+        cam = createCameraBurst();
         const stream = await cam.open();
         $('camVideo').srcObject = stream;
         renderCounts();
         setStatus('Hold steady. Pick the frame count, then tap the shutter.');
         overlay.hidden = false;
       } catch (e) {
-        cam.close(); cam = null;
-        window.dispatchEvent(new CustomEvent('camera-end', { detail: { ok: false, code: 'denied', shots: 0, failed: 0, ms: 0 } }));
-        window.setStatus(e && e.name === 'NotAllowedError' ? 'Camera blocked — allow camera access and try again.' : 'Could not use the camera on this device.', true);
+        if (cam) { cam.close(); cam = null; }
+        const denied = e && (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError');
+        window.dispatchEvent(new CustomEvent('camera-end', { detail: { ok: false, code: denied ? 'denied' : 'unsupported', shots: 0, failed: 0, ms: 0 } }));
+        window.setStatus(denied ? 'Camera blocked — allow camera access and try again.' : 'Could not use the camera on this device.', true);
       }
     }
 
     async function shoot() {
+      const c = cam;   // the local handle: Cancel clears the shared one
       $('camShutter').disabled = true;
       const t0 = performance.now();
       cancelRequested = false;
       window.dispatchEvent(new CustomEvent('camera-shoot', { detail: { count: burstCount } }));
       try {
-        await cam.lockExposure();
+        await c.lockExposure();
         for (let n = 3; n >= 1 && !cancelRequested; n--) { setStatus(n + '…'); await new Promise((ok) => setTimeout(ok, 500)); }
         if (cancelRequested) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' });
-        const r = await cam.shootBurst({ count: burstCount, onShot: (i, total) => setStatus(`Shot ${i} of ${total}`) });
-        cam.close(); cam = null;
+        const r = await c.shootBurst({ count: burstCount, onShot: (i, total) => setStatus(`Shot ${i} of ${total}`) });
+        c.close();
         overlay.hidden = true;
         window.dispatchEvent(new CustomEvent('camera-end', { detail: { ok: true, code: 'ok', shots: r.shots, failed: r.failed, ms: Math.round(performance.now() - t0) } }));
-        if (r.failed) window.setStatus(`Only ${r.shots} of ${burstCount} shots came out.`, true);
+        $('mode').value = 'mean'; updateHints();
+        shortfall = r.failed;
+        state.photos = [];   // a fresh burst merges alone, never on top of old photos
         await addPaths(tiny.addFiles(r.files));
-        runMerge();
+        $('merge').click();   // the real button, so merge timing and analytics match a user merge
       } catch (e) {
         const cancelled = e && e.name === 'AbortError';   // the Cancel button owns that event
-        if (cam) { cam.close(); cam = null; }
+        c.close();
         overlay.hidden = true;
         if (!cancelled) {
-          window.dispatchEvent(new CustomEvent('camera-end', { detail: { ok: false, code: 'shot_error', shots: 0, failed: burstCount, ms: Math.round(performance.now() - t0) } }));
-          window.setStatus('Only ' + (e && e.min ? 'one' : 'no') + ' shot came out. Try again, holding steadier.', true);
+          const shots = e && e.shots != null ? e.shots : 0;
+          window.dispatchEvent(new CustomEvent('camera-end', { detail: { ok: false, code: 'shot_error', shots, failed: burstCount - shots, ms: Math.round(performance.now() - t0) } }));
+          window.setStatus(shots === 1 ? 'Only one shot came out. Try again, holding steadier.' : 'No shots came out. Try again, holding steadier.', true);
         }
       } finally {
+        if (cam === c) cam = null;
         $('camShutter').disabled = false;
       }
     }
 
+    // A shortfall during the burst is erased by the merge status within
+    // milliseconds, so say it on the merge's own line, where it stays.
+    window.addEventListener('merge-end', () => {
+      if (!shortfall) return;
+      $('summary').textContent += ` (only ${burstCount - shortfall} of ${burstCount} shots came out)`;
+      shortfall = 0;
+    });
+
     overlay.addEventListener('click', (e) => {
       const c = e.target.closest('[data-n]');
-      if (c) { burstCount = +c.dataset.n; try { localStorage.setItem(COUNT_KEY, burstCount); } catch { /* not persisted */ } renderCounts(); return; }
+      if (c) {
+        burstCount = +c.dataset.n;
+        try { localStorage.setItem('burstCount', burstCount); } catch { /* not persisted */ }
+        renderCounts(); return;
+      }
       if (e.target === $('camShutter')) shoot();
       else if (e.target === $('camCancel')) {
         cancelRequested = true;
@@ -151,6 +197,12 @@ if (typeof module === 'undefined' && globalThis.ImageCapture &&
         overlay.hidden = true;
         window.dispatchEvent(new CustomEvent('camera-end', { detail: { ok: false, code: 'cancelled', shots: 0, failed: 0, ms: 0 } }));
       }
+    });
+    // leaving the page with the overlay open must release the camera
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden || !cam) return;
+      cam.abort(); cam.close(); cam = null;
+      overlay.hidden = true;
     });
     openBtn.addEventListener('click', start);
     document.addEventListener('click', (e) => { if (e.target.closest('.scene-shoot')) start(); });

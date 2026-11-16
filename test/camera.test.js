@@ -120,3 +120,47 @@ test('environment constraint falls back to a generic request', async () => {
   assert.equal(deps.calls.gum.length, 2);
   assert.deepEqual(deps.calls.gum[1], { video: true });
 });
+
+test('a hanging environment request falls back after a timeout', async () => {
+  const deps = makeDeps();
+  let stopped = 0;
+  const lateTrack = { getSettings: () => ({}), applyConstraints() {}, stop() { stopped++; } };
+  let resolveLate;
+  deps.calls.gumResult = (c) =>
+    c.video.facingMode ? new Promise((ok) => { resolveLate = ok; })
+      : Promise.resolve({ getVideoTracks: () => [{ getSettings: () => ({}), applyConstraints() {}, stop() {} }] });
+  const cam = createCameraBurst({ ...deps, timeout: () => new Promise((ok) => setTimeout(ok, 20)) });
+  await cam.open();
+  assert.equal(deps.calls.gum.length, 2);
+  resolveLate({ getTracks: () => [lateTrack], getVideoTracks: () => [lateTrack] });
+  await new Promise((ok) => setTimeout(ok, 10));
+  assert.equal(stopped, 1);   // the late stream's tracks are stopped: no camera left open
+});
+
+test('sanitizeCount keeps 4..8 integers, 6 otherwise', () => {
+  const { sanitizeCount } = createCameraBurst;
+  assert.equal(sanitizeCount(4), 4);
+  assert.equal(sanitizeCount(8), 8);
+  assert.equal(sanitizeCount(99), 6);
+  assert.equal(sanitizeCount(2), 6);
+  assert.equal(sanitizeCount(5.5), 6);
+  assert.equal(sanitizeCount('7'), 7);
+  assert.equal(sanitizeCount(null), 6);
+  assert.equal(sanitizeCount('abc'), 6);
+});
+
+test('cancel after the last shot still reports AbortError', async () => {
+  const deps = makeDeps();
+  const cam = createCameraBurst(deps);
+  await cam.open();
+  const p = cam.shootBurst({ count: 4, onShot: () => {} });
+  cam.abort();
+  await assert.rejects(p, (e) => e.name === 'AbortError');
+});
+
+test('too-few error carries the shot counts', async () => {
+  const deps = makeDeps([undefined, ...Array(5).fill(new Error('gone'))]);
+  const cam = createCameraBurst(deps);
+  await cam.open();
+  await assert.rejects(cam.shootBurst({ count: 6, onShot: () => {} }), (e) => e.min === true && e.shots === 1 && e.failed === 5);
+});
