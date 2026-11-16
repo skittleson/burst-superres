@@ -137,6 +137,53 @@ test('a hanging environment request falls back after a timeout', async () => {
   assert.equal(stopped, 1);   // the late stream's tracks are stopped: no camera left open
 });
 
+test('open with a deviceId uses an exact device constraint', async () => {
+  const deps = makeDeps();
+  const cam = createCameraBurst(deps);
+  await cam.open({ deviceId: 'abc' });
+  assert.deepEqual(deps.calls.gum[0], { video: { deviceId: { exact: 'abc' } } });
+});
+
+test('maxRes sets the largest still size; applyMax(false) restores', async () => {
+  const deps = makeDeps();
+  const opts = [];
+  deps.ImageCaptureCtor = function () {
+    this.takePhoto = () => Promise.resolve(new Blob(['x']));
+    this.getPhotoSettings = () => Promise.resolve({ imageWidth: 4000, imageHeight: 3000 });
+    this.getPhotoCapabilities = () => Promise.resolve({ imageWidth: { max: 8000 }, imageHeight: { max: 6000 } });
+    this.setOptions = (o) => { opts.push(o); return Promise.resolve(); };
+  };
+  const cam = createCameraBurst(deps);
+  await cam.open({ maxRes: true });
+  assert.deepEqual(opts[0], { imageWidth: 8000, imageHeight: 6000 });
+  await cam.applyMax(false);
+  assert.deepEqual(opts[1], { imageWidth: 4000, imageHeight: 3000 });
+});
+
+test('maxRes failure (no capabilities exposed) does not break open', async () => {
+  const deps = makeDeps();
+  deps.ImageCaptureCtor = function () {
+    this.takePhoto = () => Promise.resolve(new Blob(['x']));
+    this.getPhotoSettings = () => Promise.reject(new Error('nope'));
+    this.getPhotoCapabilities = () => Promise.reject(new Error('nope'));
+  };
+  const cam = createCameraBurst(deps);
+  await cam.open({ maxRes: true });   // resolves anyway
+});
+
+test('listRearCameras keeps video inputs only', () => {
+  const cams = createCameraBurst.listRearCameras([
+    { kind: 'videoinput', deviceId: '1' }, { kind: 'audioinput', deviceId: '2' }, { kind: 'videoinput', deviceId: '3' },
+  ]);
+  assert.deepEqual(cams.map((c) => c.deviceId), ['1', '3']);
+});
+
+test('capCount allows up to 8 normally, 4 at full resolution', () => {
+  assert.equal(createCameraBurst.capCount(6, false), 6);
+  assert.equal(createCameraBurst.capCount(8, true), 4);
+  assert.equal(createCameraBurst.capCount(4, true), 4);
+});
+
 test('sanitizeCount keeps 4..8 integers, 6 otherwise', () => {
   const { sanitizeCount } = createCameraBurst;
   assert.equal(sanitizeCount(4), 4);

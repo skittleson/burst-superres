@@ -12,11 +12,14 @@ function createCameraBurst(deps = {}) {
   const timeout = deps.timeout || ((ms = 4000) => new Promise((ok) => setTimeout(ok, ms)));
   let stream = null, capture = null, aborted = false;
 
-  async function open() {
+  async function open(opts = {}) {
     // Some Android builds hang or reject facingMode; retry without it after
     // a short timeout, and stop the late stream's tracks so no camera stays
     // open if the hung request ever resolves.
-    const env = media.getUserMedia({ video: { facingMode: 'environment' } });
+    const want = opts.deviceId
+      ? { video: { deviceId: { exact: opts.deviceId } } }
+      : { video: { facingMode: 'environment' } };
+    const env = media.getUserMedia(want);
     try {
       stream = await Promise.race([env, timeout().then(() => { throw new Error('timeout'); })]);
     } catch {
@@ -24,7 +27,25 @@ function createCameraBurst(deps = {}) {
       stream = await media.getUserMedia({ video: true });
     }
     capture = new ImageCaptureCtor(stream.getVideoTracks()[0]);
+    baseSize = null;
+    if (opts.maxRes) await applyMax(true);
     return stream;
+  }
+
+  // Full-resolution stills where the camera reports a size range (a 50 MP
+  // sensor offers one); applyMax(false) restores the preview's size. A
+  // camera that exposes no range is left untouched: takePhoto still works.
+  let baseSize = null;
+  async function applyMax(on) {
+    try {
+      if (on) {
+        const caps = await capture.getPhotoCapabilities();
+        if (!baseSize) baseSize = await capture.getPhotoSettings();
+        await capture.setOptions({ imageWidth: caps.imageWidth.max, imageHeight: caps.imageHeight.max });
+      } else if (baseSize) {
+        await capture.setOptions({ imageWidth: baseSize.imageWidth, imageHeight: baseSize.imageHeight });
+      }
+    } catch { /* no size control on this camera */ }
   }
 
   // Freeze exposure at what the preview settled on, so 6 frames share one
@@ -77,8 +98,13 @@ function createCameraBurst(deps = {}) {
     if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; capture = null; }
   }
 
-  return { open, close, shootBurst, lockExposure, abort };
+  return { open, close, shootBurst, lockExposure, applyMax, abort };
 }
+// Video inputs from an enumerateDevices list, in enumeration order.
+createCameraBurst.listRearCameras = (devices) => devices.filter((d) => d.kind === 'videoinput');
+// Full-resolution stills are ~4x the pixels: cap the burst so 4 frames
+// still fit under the app's canvas ceiling on a phone.
+createCameraBurst.capCount = (n, fullRes) => (fullRes ? Math.min(4, n) : n);
 // 4..8 integers pass; anything else (99, 2, 5.5, junk) falls back to 6.
 createCameraBurst.sanitizeCount = (v) => {
   const n = Number(v);
@@ -100,21 +126,43 @@ if (typeof module === 'undefined' && globalThis.ImageCapture &&
     };
     let cam = null, burstCount = readCount(), cancelRequested = false, shortfall = 0;
 
+    // Full-resolution stills: remembered; a phone with a 50 MP sensor
+    // offers it through getPhotoCapabilities, others silently do not.
+    let fullRes = false;
+    try { fullRes = localStorage.getItem('camFullRes') === '1'; } catch { /* not persisted */ }
+
     const overlay = document.createElement('div');
     overlay.id = 'camOverlay';
     overlay.hidden = true;
     overlay.innerHTML =
       '<video id="camVideo" autoplay playsinline muted></video>' +
       '<p id="camStatus" aria-live="polite"></p>' +
-      '<div id="camCounts"></div>' +
+      '<div id="camLenses" class="cam-row"></div>' +
+      '<div id="camCounts" class="cam-row"></div>' +
       '<div class="cam-actions"><button id="camCancel">Cancel</button>' +
       '<button id="camShutter" aria-label="Shoot burst"></button></div>';
     document.body.append(overlay);
     const $ = (id) => document.getElementById(id);
 
+    let lenses = [], lensIdx = 0;
+    function renderLenses() {
+      // one camera: no lens choice, but Max res stays available
+      const chips = lenses.length < 2 ? [] : lenses.map((d, i) =>
+        `<button class="cam-lens${i === lensIdx ? ' on' : ''}" data-i="${i}">${'Lens ' + (i + 1)}</button>`);
+      $('camLenses').innerHTML = chips.join('') +
+        `<button class="cam-lens${fullRes ? ' on' : ''}" data-full="1" title="Largest still size, fewer frames">Max res</button>`;
+    }
+    async function restart() {
+      if (cam) { cam.abort(); cam.close(); cam = null; }
+      await start(lenses[lensIdx] && lenses[lensIdx].deviceId);
+    }
+
     function renderCounts() {
-      $('camCounts').innerHTML = [4, 5, 6, 7, 8].map((n) =>
-        `<button class="cam-count${n === burstCount ? ' on' : ''}" data-n="${n}">${n}</button>`).join('');
+      const nums = fullRes ? [4] : [4, 5, 6, 7, 8];
+      burstCount = createCameraBurst.capCount(burstCount, fullRes);
+      $('camCounts').innerHTML = nums.map((n) =>
+        `<button class="cam-count${n === burstCount ? ' on' : ''}" data-n="${n}">${n}</button>`).join('') +
+        (fullRes ? '<span class="cam-note">fewer frames at full size</span>' : '');
     }
     const setStatus = (t) => { $('camStatus').textContent = t; };
 
@@ -124,14 +172,20 @@ if (typeof module === 'undefined' && globalThis.ImageCapture &&
     openBtn.textContent = 'Shoot a burst with the camera';
     document.getElementById('drop')?.append(openBtn);
 
-    async function start() {
+    async function start(deviceId) {
       if (cam || state.busy) return;   // no double permission prompt, no opening mid-merge
       try {
         cam = createCameraBurst();
-        const stream = await cam.open();
+        const stream = await cam.open({ deviceId, maxRes: fullRes });
         $('camVideo').srcObject = stream;
+        // device labels only appear after permission; list the rear cameras once
+        if (!lenses.length && navigator.mediaDevices.enumerateDevices) {
+          try { lenses = createCameraBurst.listRearCameras(await navigator.mediaDevices.enumerateDevices()); } catch { /* keep empty */ }
+        }
+        renderLenses();
         renderCounts();
-        setStatus('Hold steady. Pick the frame count, then tap the shutter.');
+        setStatus(fullRes ? 'Full size: 4 frames. Hold very steady or use a tripod.'
+          : 'Hold steady. Pick the frame count, then tap the shutter.');
         overlay.hidden = false;
       } catch (e) {
         if (cam) { cam.close(); cam = null; }
@@ -184,6 +238,13 @@ if (typeof module === 'undefined' && globalThis.ImageCapture &&
     });
 
     overlay.addEventListener('click', (e) => {
+      const lens = e.target.closest('[data-i]');
+      if (lens) { lensIdx = +lens.dataset.i; renderLenses(); restart(); return; }
+      if (e.target.closest('[data-full]')) {
+        fullRes = !fullRes;
+        try { localStorage.setItem('camFullRes', fullRes ? '1' : '0'); } catch { /* not persisted */ }
+        renderLenses(); renderCounts(); restart(); return;
+      }
       const c = e.target.closest('[data-n]');
       if (c) {
         burstCount = +c.dataset.n;

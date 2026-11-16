@@ -44,9 +44,10 @@ header .get-app { margin-left: auto; font-size: 13px; white-space: nowrap; }
 #camOverlay[hidden] { display: none; }
 #camVideo { flex: 1; min-height: 0; width: 100%; object-fit: contain; border-radius: var(--r-md); background: #000; }
 #camStatus { color: var(--text-dim); font-size: 13.5px; min-height: 1.3em; text-align: center; }
-#camCounts { display: flex; gap: 7px; }
-.cam-count { font-size: 12.5px; padding: 5px 12px; border-radius: 999px; background: var(--sunken); border: 1px solid var(--line-soft); color: var(--text-dim); }
-.cam-count.on { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.cam-row { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.cam-note { font-size: 11.5px; color: var(--muted); }
+.cam-count, .cam-lens { font-size: 12.5px; padding: 5px 12px; border-radius: 999px; background: var(--sunken); border: 1px solid var(--line-soft); color: var(--text-dim); }
+.cam-count.on, .cam-lens.on { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .cam-actions { display: flex; align-items: center; gap: 22px; }
 #camShutter { width: 62px; height: 62px; border-radius: 50%; border: 3px solid var(--accent); background: var(--accent-dim); }
 #camOpen { display: block; width: 100%; margin-top: 10px; background: none; border-color: var(--accent); color: var(--accent); }
