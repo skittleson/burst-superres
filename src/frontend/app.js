@@ -382,6 +382,7 @@ async function addPaths(paths) {
   if (state.photos.length) applySharpenDefault();
   if (skipped) setStatus(`Up to ${MAX_PHOTOS} photos. ${skipped} more were not added.`);
   photosChanged();
+  if (state.photos.length >= 2) showGuideHintOnce();
 }
 
 // Dropped or picked files and folders: expand folders, and when they hold
@@ -429,6 +430,35 @@ function fromBase64(b64) {
   const s = atob(b64), out = new Uint8Array(s.length);
   for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
   return out;
+}
+
+const GUIDE_HINT_KEY = 'burstsr.guideHintDismissed';
+function guideHintDismissed() {
+  if (typeof localStorage === 'undefined') return true;
+  try { return !!localStorage.getItem(GUIDE_HINT_KEY); } catch { return true; }
+}
+function dismissGuideHint() {
+  const h = document.getElementById('guideHint');
+  if (h) h.remove();
+  if (typeof localStorage === 'undefined') return;
+  try { localStorage.setItem(GUIDE_HINT_KEY, '1'); } catch { /* not persisted */ }
+}
+function showGuideHintOnce() {
+  if (guideHintDismissed()) return;
+  const chips = document.getElementById('sceneChips');
+  if (!chips || document.getElementById('guideHint')) return;
+  const p = document.createElement('p');
+  p.className = 'advice';
+  p.id = 'guideHint';
+  p.textContent = "New here? Tap what you're shooting — each guide has tips that make the merge better. ";
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.setAttribute('aria-label', 'Dismiss this tip');
+  b.textContent = 'Got it';
+  b.addEventListener('click', dismissGuideHint);
+  p.appendChild(b);
+  chips.insertAdjacentElement('afterend', p);
+  if (typeof localStorage !== 'undefined') { try { localStorage.setItem(GUIDE_HINT_KEY, '1'); } catch { /* not persisted */ } }
 }
 
 function photosChanged() {
@@ -1079,6 +1109,7 @@ $('sceneChips').addEventListener('click', (e) => {
   const b = e.target.closest('[data-scene]');
   if (!b) return;
   applyScene(b.dataset.scene);
+  dismissGuideHint();
   stored.set('scene', b.dataset.scene || '');
   window.dispatchEvent(new CustomEvent('scene-select', { detail: { scene: b.dataset.scene || 'general' } }));
 });
