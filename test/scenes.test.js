@@ -8,7 +8,7 @@ test('every scene has a label, tips and an expectation', () => {
     assert.ok(s.tips.length >= 3 && s.tips.every((t) => t.length > 20), s.id + ' tips');
     assert.ok(s.expect.length > 20, s.id + ' expect');
   }
-  assert.deepEqual(SCENES.map((s) => s.id), ['landscape', 'night', 'handheld']);
+  assert.deepEqual(SCENES.map((s) => s.id), ['landscape', 'night', 'handheld', 'city', 'astro']);
 });
 
 test('byId finds scenes and returns null for unknown ids', () => {

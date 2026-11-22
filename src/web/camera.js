@@ -110,6 +110,27 @@ createCameraBurst.sanitizeCount = (v) => {
   const n = Number(v);
   return Number.isInteger(n) && n >= 4 && n <= 8 ? n : 6;
 };
+// Plain note for where the camera button can't appear (iOS Safari has no
+// ImageCapture). Surfacing it in the UI needs an app.js/index.html change.
+createCameraBurst.cameraSupportNote = () =>
+  'Camera capture needs Chrome on Android. On iPhone, shoot a burst in your camera app and drop the photos here.';
+// Button text for a lens from its enumerateDevices label, vendor noise
+// stripped ("camera2 0, facing back" -> "back"); falls back to "Lens N".
+createCameraBurst.lensLabel = (d, i) => {
+  const clean = ((d && d.label) || '')
+    .replace(/^\s*camera\d*\s*[\d,:-]*\s*/i, '')
+    .replace(/\bfacing\b\s*/gi, '')
+    .replace(/\s*[-–—]\s*[^-–—]*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return clean || 'Lens ' + (i + 1);
+};
+// Pre-merge memory guard: many big stills can blow a phone's canvas ceiling.
+// Returns a plain warning line or null; never blocks the merge.
+createCameraBurst.mergeGuard = (shots, totalBytes) =>
+  shots >= 6 && totalBytes > 12 * 1024 * 1024
+    ? `${shots} full-size shots may be too much for this phone. Try 4 frames?`
+    : null;
 if (typeof module === 'object' && module.exports) module.exports = createCameraBurst;
 
 // ---------- browser overlay ----------
@@ -134,6 +155,8 @@ if (typeof module === 'undefined' && globalThis.ImageCapture &&
     const overlay = document.createElement('div');
     overlay.id = 'camOverlay';
     overlay.hidden = true;
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
     overlay.innerHTML =
       '<video id="camVideo" autoplay playsinline muted></video>' +
       '<p id="camStatus" aria-live="polite"></p>' +
@@ -148,7 +171,7 @@ if (typeof module === 'undefined' && globalThis.ImageCapture &&
     function renderLenses() {
       // one camera: no lens choice, but Max res stays available
       const chips = lenses.length < 2 ? [] : lenses.map((d, i) =>
-        `<button class="cam-lens${i === lensIdx ? ' on' : ''}" data-i="${i}">${'Lens ' + (i + 1)}</button>`);
+        `<button class="cam-lens${i === lensIdx ? ' on' : ''}" data-i="${i}">${createCameraBurst.lensLabel(d, i)}</button>`);
       $('camLenses').innerHTML = chips.join('') +
         `<button class="cam-lens${fullRes ? ' on' : ''}" data-full="1" title="Largest still size, fewer frames">Max res</button>`;
     }
@@ -184,9 +207,10 @@ if (typeof module === 'undefined' && globalThis.ImageCapture &&
         }
         renderLenses();
         renderCounts();
-        setStatus(fullRes ? 'Full size: 4 frames. Hold very steady or use a tripod.'
+        setStatus(fullRes ? 'Full size: 4 frames max. Hold still between shots so they line up.'
           : 'Hold steady. Pick the frame count, then tap the shutter.');
         overlay.hidden = false;
+        $('camShutter').focus();
       } catch (e) {
         if (cam) { cam.close(); cam = null; }
         const denied = e && (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError');
@@ -212,6 +236,8 @@ if (typeof module === 'undefined' && globalThis.ImageCapture &&
         $('mode').value = 'mean'; updateHints();
         shortfall = r.failed;
         state.photos = [];   // a fresh burst merges alone, never on top of old photos
+        const warn = createCameraBurst.mergeGuard(r.shots, r.files.reduce((n, f) => n + f.size, 0));
+        if (warn) window.setStatus(warn);   // warn only; the merge still runs
         await addPaths(tiny.addFiles(r.files));
         $('merge').click();   // the real button, so merge timing and analytics match a user merge
       } catch (e) {
@@ -252,12 +278,17 @@ if (typeof module === 'undefined' && globalThis.ImageCapture &&
         renderCounts(); return;
       }
       if (e.target === $('camShutter')) shoot();
-      else if (e.target === $('camCancel')) {
-        cancelRequested = true;
-        if (cam) { cam.abort(); cam.close(); cam = null; }
-        overlay.hidden = true;
-        window.dispatchEvent(new CustomEvent('camera-end', { detail: { ok: false, code: 'cancelled', shots: 0, failed: 0, ms: 0 } }));
-      }
+      else if (e.target === $('camCancel')) cancel();
+    });
+    function cancel() {
+      cancelRequested = true;
+      if (cam) { cam.abort(); cam.close(); cam = null; }
+      overlay.hidden = true;
+      window.dispatchEvent(new CustomEvent('camera-end', { detail: { ok: false, code: 'cancelled', shots: 0, failed: 0, ms: 0 } }));
+    }
+    // Escape closes the overlay like Cancel does.
+    overlay.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !overlay.hidden) cancel();
     });
     // leaving the page with the overlay open must release the camera
     document.addEventListener('visibilitychange', () => {

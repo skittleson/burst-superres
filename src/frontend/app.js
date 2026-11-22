@@ -37,12 +37,53 @@ const state = {
 // instantiated there. It keeps the decoded photos and their alignment, so
 // ticking photos or changing the method only re-merges.
 //
+// Decode a raw file, optionally band-parallelized across the helper pool.
+// Falls back to a serial decode of the whole file on any band error.
 // With a pool of helper workers (MessagePorts the page hands over), alignment
 // runs one photo per helper and the merge runs one band of rows per helper;
 // without one, everything runs here.
 function workerMain(SR, RAW) {
   let frames = null, raws = null, reg = null, orientation = 1, exposure = 1, refOriented = null, finish = null;
   let pool = [], sceneKey = null;
+  // Decode a raw file, optionally band-parallelized across the helper pool.
+  // Falls back to a serial decode of the whole file on any band error.
+  const decodeRaw = async (bytes, info, pool) => {
+    const H = info.rawHeight, W = info.rawWidth;
+    if (!pool || !pool.length) return RAW.decode(bytes, info);
+    const uncompressed = info.compression === 1;
+    const bytesPerRow = uncompressed ? W * 2 : W;
+    const bands = pool.length * 2;
+    const bandH = Math.ceil(H / bands);
+    const bandCount = Math.ceil(H / bandH);
+    const stripStart = info.stripOffset;
+    const tasks = [];
+    for (let b = 0; b < bandCount; b++) {
+      const r0 = b * bandH, r1 = Math.min(H, r0 + bandH);
+      const sub = bytes.slice(stripStart + r0 * bytesPerRow, stripStart + r1 * bytesPerRow);
+      const subInfo = { ...info, rawHeight: r1 - r0, stripOffset: 0, stripBytes: (r1 - r0) * (uncompressed ? W * 2 : W) };
+      tasks.push({ r0, r1, sub, subInfo });
+    }
+    const results = new Array(bandCount);
+    const chunks = pool.map(async (h) => {
+      let b = pool.indexOf(h) % bandCount;
+      while (b < bandCount) {
+        try {
+          const t = tasks[b];
+          const reply = await h.call({ type: 'decode', bytes: t.sub, info: t.subInfo, le: bytes[0] === 0x49 }, [t.sub.buffer]);
+          results[b] = new Uint16Array(reply.out);
+        } catch (err) {
+          return undefined;
+        }
+        b += pool.length;
+      }
+      return 0;
+    });
+    await Promise.all(chunks);
+    if (results.some((r) => !r)) return RAW.decode(bytes, info);   // fall back to serial
+    const raw = new Uint16Array(W * H);
+    for (let b = 0; b < bandCount; b++) raw.set(results[b], b * bandH * W);
+    return raw;
+  };
   const makePool = (ports) => ports.map((port) => {
     const h = { port, pending: new Map(), seq: 0 };
     port.onmessage = (e) => {
@@ -96,13 +137,15 @@ function workerMain(SR, RAW) {
         raws = null; orientation = 1; exposure = 1; finish = null;
         if (msg.frames[0].kind === 'raw') {
           raws = []; frames = [];
-          msg.frames.forEach((f, i) => {
+          for (let i = 0; i < msg.frames.length; i++) {
+            const f = msg.frames[i];
             step('decode')(i / msg.frames.length, `Decoding raw photo ${i + 1} of ${msg.frames.length}`);
-            const bytes = new Uint8Array(f.buffer), info = RAW.parse(bytes), raw = RAW.decode(bytes, info);
+            const bytes = new Uint8Array(f.buffer), info = RAW.parse(bytes);
+            const raw = await decodeRaw(bytes, info, pool);
             if (i === 0) { exposure = RAW.autoExposure(raw, info, f.targetMean || 110); orientation = info.orientation; finish = RAW.finisher(info, exposure); }
             raws.push({ raw, info, levels: RAW.levels(info) });
             frames.push(RAW.render(raw, info, { exposure, orient: false }));
-          });
+          }
         } else {
           frames = msg.frames.map((f) => ({ width: f.width, height: f.height, data: new Uint8ClampedArray(f.buffer) }));
         }
@@ -188,6 +231,11 @@ function helperMain(SR, RAW) {
       return {};
     }
     if (msg.type === 'align') return { result: SR.registerFrame(prep, msg.frame) };
+    if (msg.type === 'decode') {
+      const bytes = new Uint8Array(msg.bytes);
+      const raw = RAW.decode(bytes, msg.info, { le: msg.le });
+      return { out: raw.buffer, transfer: [raw.buffer] };
+    }
     if (msg.type === 'scene') {
       scene = msg.scene;
       if (scene.raws) finish = RAW.finisher(scene.finish.info, scene.finish.exposure);
@@ -399,7 +447,7 @@ function badgeFor(p, i) {
     (Math.abs(d.rot) >= 0.005 ? ` · turned ${d.rot.toFixed(2)}°` : '') +
     ` · alignment error ${d.err.toFixed(2)} px` +
     (d.mode === 'local' ? ` · handheld correction on${d.badFraction > 0.005 ? `, ${(d.badFraction * 100).toFixed(0)}% of the picture left out where it did not match` : ''}` : '');
-  return `<span class="badge ${d.verdict}" title="${esc(tip)}">${VERDICT_LABEL[d.verdict]}</span>`;
+  return `<span class="badge ${d.verdict}" data-badge title="${esc(tip)}">${VERDICT_LABEL[d.verdict]}</span>`;
 }
 
 function renderList() {
@@ -412,7 +460,7 @@ function renderList() {
       <div><div class="name" title="${esc(p.path)}">${esc(p.name)}</div>
         <div class="meta${isRef ? ' ref' : ''}">${p.width} × ${p.height}${p.raw ? ' · RAW' : ''}</div></div>
       ${badgeFor(p, i)}
-      <button class="remove" data-rm="${i}" title="Remove" ${state.busy ? 'disabled' : ''}>×</button>
+      <button class="remove" data-rm="${i}" title="Remove" aria-label="Remove ${esc(p.name)}" ${state.busy ? 'disabled' : ''}>×</button>
     </li>`;
   }).join('');
   const using = state.photos.filter((p, i) => p.include || (state.aligned && i === state.aligned.refIndex)).length;
@@ -426,10 +474,17 @@ function renderList() {
   for (const id of ['pick', 'pickFolder', 'mode', 'compareMethods', 'sharpen']) $(id).disabled = state.busy;
 }
 
+let badgeTip = 0;   // clears a tapped badge's text a few seconds later
 $('list').addEventListener('click', (e) => {
   if (state.busy) return;
   const rm = e.target.closest('[data-rm]');
   if (rm) { state.photos.splice(+rm.dataset.rm, 1); state.aligned = null; photosChanged(); return; }
+  const badge = e.target.closest('[data-badge]');
+  if (badge && window.matchMedia('(pointer: coarse)').matches) {
+    setStatus(badge.title);
+    clearTimeout(badgeTip); badgeTip = setTimeout(() => { if ($('status').textContent === badge.title) setStatus(''); }, 4000);
+    return;
+  }
   const inc = e.target.closest('[data-inc]');
   if (inc) { state.photos[+inc.dataset.inc].include = inc.checked; renderList(); updateStale(); }
 });
@@ -556,6 +611,7 @@ const SHARPEN_HINT = {
   0.5: 'A visible pass on fine detail. Watch for grainy edges.',
   1: 'A strong pass. Can add halos around hard edges.',
 };
+const SHARPEN_NAME = { 0.25: 'Gentle', 0.5: 'Medium', 1: 'Strong' };
 function updateHints() {
   $('modeHint').textContent = MODE_HINT[$('mode').value] || '';
   $('sharpenHint').textContent = SHARPEN_HINT[$('sharpen').value] || '';
@@ -679,10 +735,11 @@ function showResults(msgs, inputW, inputH, count) {
   ov.width = Math.round(main.width * s); ov.height = Math.round(main.height * s);
   const mi = state.mergeInfo || {};
   const how = [state.aligned.raw ? (mi.direct && mainMode === 'mean' ? 'RAW, merged from the sensor samples' : 'RAW, demosaiced then merged') : null,
-    mi.sharpen > 0 ? `sharpened ${mi.sharpen}${mi.auto ? ' (auto)' : ''}` : mi.auto ? 'no sharpening needed (auto)' : null].filter(Boolean).join(' · ');
+    mi.sharpen > 0 ? `sharpened ${SHARPEN_NAME[mi.sharpen] || mi.sharpen}${mi.auto ? ' (auto)' : ''}` : mi.auto ? 'no sharpening needed (auto)' : null].filter(Boolean).join(' · ');
   $('dims').textContent = `${main.width} × ${main.height} px, from ${count} photos of ${inputW} × ${inputH}` + (how ? ` · ${how}` : '');
-  $('diff').textContent = `${MODE_LABEL[mainMode]} vs one photo upscaled 2×: ${main.diff.meanAbs.toFixed(1)} levels different on average (of 255); ` +
-    `${main.diff.pctOver.toFixed(0)}% of pixels changed by more than ${main.diff.threshold} levels.`;
+  $('diff').textContent = `${MODE_LABEL[mainMode]} vs one photo upscaled 2×: mostly a drop in noise — ` +
+    `on average a pixel differs by ${main.diff.meanAbs.toFixed(1)} of 255 levels, and ` +
+    `${main.diff.pctOver.toFixed(0)}% of pixels differ by more than ${main.diff.threshold} levels.`;
   renderExifLine();
   $('compareWrap').hidden = state.results.modes.length < 2;
   const other = state.results.modes[1];
@@ -761,13 +818,22 @@ function renderCompare() {
     window.dispatchEvent(new CustomEvent('before-shown'));
   } else {
     $('before').getContext('2d').clearRect(0, 0, c.w, c.h);
-    $('tagBefore').textContent = state.aligned && state.aligned.raw ? 'Before: one RAW photo, demosaiced, Lanczos 2×' : 'Before: one photo, Lanczos 2×';
+    $('tagBefore').textContent = state.aligned && state.aligned.raw ? 'Before: one RAW photo, demosaiced, enlarged 2×' : 'Before: one photo, enlarged 2×';
     worker.postMessage({ type: 'before', id: ++state.beforeReq, x: c.x, y: c.y, width: c.w, height: c.h });
   }
   $('tagAfter').style.left = isSide() ? `${c.w * c.css + 16}px` : '';
   $('tagAfter').style.right = isSide() ? 'auto' : '';
   drawNavigator(c);
-  setSplit(+$('slider').value);
+  const pct = +$('slider').value;
+  $('compare').setAttribute('aria-label', compareLabel(pct));
+  setSplit(pct);
+}
+
+// A spoken summary of the compare view, updated with the split.
+function compareLabel(pct) {
+  const r = state.results;
+  const left = compareMethods() ? `${MODE_LABEL[r.modes[1]]} merge` : 'one photo enlarged 2×';
+  return `Merge of ${r.count} photos. Left: ${left}. Right: ${MODE_LABEL[r.mainMode]} merge. Split at ${Math.round(pct)}%.`;
 }
 
 function drawNavigator(c) {
@@ -786,6 +852,8 @@ function showBefore(msg) {
 
 function setSplit(pct) {
   if (isSide()) return;
+  $('slider').setAttribute('aria-valuenow', String(Math.round(pct)));
+  $('compare').setAttribute('aria-label', compareLabel(pct));
   const shown = state.holdBefore ? 100 : pct;
   $('after').style.clipPath = `inset(0 0 0 ${shown}%)`;
   $('handle').style.left = `${$('after').getBoundingClientRect().width * shown / 100}px`;
@@ -892,10 +960,12 @@ async function save(kind, path) {
     setStatus('Writing file…');
     const size = await writeFile(path, bytes);
     setBusy(false); setProgress(null);
+    const saved = `Saved ${(size / 1048576).toFixed(1)} MB as ${fileName(path)}.`;
+    const next = ' If something moved, try Median; or adjust sharpening and merge again.';
     if (tiny.web) {
-      $('status').textContent = `Saved ${(size / 1048576).toFixed(1)} MB as ${fileName(path)}.`;
+      $('status').textContent = saved + next;
     } else {
-      $('status').innerHTML = `Saved ${(size / 1048576).toFixed(1)} MB to ${esc(path)}. <a href="#" id="reveal">Show in folder</a>`;
+      $('status').innerHTML = `${saved} <a href="#" id="reveal">Show in folder</a>${esc(next)}`;
       $('reveal').onclick = (e) => { e.preventDefault(); tiny.app.shell.reveal(path); };
     }
     return path;
@@ -937,6 +1007,11 @@ function about() {
     `How it works and why it helps: ${BLOG_URL}`);
 }
 
+function shortcuts() {
+  tiny.dialog.alert('Keyboard shortcuts',
+    'Hold \\ : see one photo.\nY : split / side by side.\nArrow keys : move the split.');
+}
+
 tiny.menu.set([
   { title: 'File', items: [
     { id: 'open', label: 'Add Photos…', key: 'o' },
@@ -946,6 +1021,7 @@ tiny.menu.set([
   ] },
   { title: 'Help', items: [
     { id: 'post', label: 'The Blog Post Behind This' },
+    { id: 'shortcuts', label: 'Keyboard Shortcuts' },
     { id: 'about', label: 'About Burst Super-Res' },
     { id: 'site', label: 'docodethatmatters.com' },
   ] },
@@ -956,6 +1032,7 @@ tiny.menu.on((id) => {
   else if (id === 'saveJpg') save('jpg');
   else if (id === 'savePng') save('png');
   else if (id === 'post') tiny.app.shell.open(BLOG_URL);
+  else if (id === 'shortcuts') shortcuts();
   else if (id === 'about') about();
   else if (id === 'site') tiny.app.shell.open(SITE_URL);
 });

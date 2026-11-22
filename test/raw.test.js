@@ -108,3 +108,36 @@ test('mergeCFA: 8 shifted mosaics resolve detail one demosaiced photo cannot, an
     assert.ok(Math.abs(a - b) / (W * H) < 2, `channel ${c}: ${(a / W / H).toFixed(1)} vs ${(b / W / H).toFixed(1)}`);
   }
 });
+
+// --- Checked-in fixture: small ARW generated from a real ILCE-6000 ARW
+// (/tmp/immich/raw/DSC00001.ARW) via tools/arw-encode.js (crop 0,0,256,256, frames 1, seed 7, RGGB).
+// Reduced to a 128x128 frame; binary fixture only (no preview beyond the fixture's own 2240-byte JPEG).
+test('fixture ARW: parses, decodes, and matches a committed checksum (runs everywhere)', () => {
+  const bytes = new Uint8Array(fs.readFileSync(__dirname + '/fixtures/ILCE-6000-crop.ARW'));
+  const info = RAW.parse(bytes);
+  assert.equal(info.model, 'ILCE-6000');
+  assert.equal(info.compression, 32767);
+  assert.deepEqual([info.rawWidth, info.rawHeight], [128, 128]);
+  assert.deepEqual([info.width, info.height], [128, 128]);
+  const raw = RAW.decode(bytes, info);
+  let sum = 0, h = 2166136261;
+  for (let y = 0; y < 128; y++) for (let x = 0; x < 128; x++) sum += raw[y * 128 + x];
+  for (let y = 0; y < 128; y += 7) for (let x = 0; x < 128; x += 13) { h ^= raw[y * 128 + x]; h = Math.imul(h, 16777619) >>> 0; }
+  assert.equal(sum, 12740570);
+  assert.equal(h, 34691717);
+  // Decode is deterministic: re-running gives identical values
+  assert.deepEqual([...RAW.decode(bytes, info)], [...raw]);
+});
+
+test('decodeRange split into halves assembles byte-identical to serial decode', () => {
+  const bytes = new Uint8Array(fs.readFileSync(__dirname + '/fixtures/ILCE-6000-crop.ARW'));
+  const info = RAW.parse(bytes);
+  const serial = RAW.decode(bytes, info);
+  const H = info.rawHeight, W = info.rawWidth;
+  const half = Math.ceil(H / 2);
+  const a = RAW.decodeRange(bytes, info, 0, half);
+  const b = RAW.decodeRange(bytes, info, half, H);
+  const joined = new Uint16Array(W * H);
+  joined.set(a, 0); joined.set(b, half * W);
+  assert.deepEqual([...joined], [...serial]);
+});

@@ -19,7 +19,7 @@ function createScenes() {
         'f/8 to f/11, focus where the detail matters: the merge cannot add detail the lens never resolved.',
         'Waves, clouds and grass gain nothing from any method; Median at least drops them from the merge instead of ghosting.',
       ],
-      expect: 'Less noise and cleaner fine edges at 2×, not 4× the detail. Check the split view at 200% before saving.',
+      expect: 'Less noise and cleaner fine edges at 2×, not 4× the detail. Check the split view at 2× zoom before saving.',
       mode: null,
     },
     {
@@ -47,6 +47,33 @@ function createScenes() {
         'Lens parallax limits handheld detail: wide lenses align better than long ones.',
       ],
       expect: 'Handheld bursts mostly buy noise reduction. Any extra detail is a bonus; check the alignment badges after the merge.',
+      mode: null,
+    },
+    {
+      id: 'city',
+      label: 'City / street',
+      pitch: 'Near and far subjects with movement: Median helps, not detail from movers.',
+      tips: [
+        'Near and far subjects shift parallax between frames; the sub-pixel offsets from slight hand movement become usable detail.',
+        'Use a tripod or brace the camera. Slight hand movement still helps, but big shakes soften the merge.',
+        'Moving traffic and people ghost if you average. Pick Median: it drops the movers outright instead of smearing them.',
+        'Expect denoise and cleaner edges, not detail from moving cars; a car in frame will not resolve into sharp parts.',
+      ],
+      expect: 'Expect less noise and cleaner fine edges, with movers dropped by Median. No detail is recovered from moving vehicles.',
+      mode: null,
+    },
+    {
+      id: 'astro',
+      label: 'Astro / night sky',
+      pitch: 'Stars on a tripod or tracking mount: denoise, not stacked star detail.',
+      tips: [
+        'Without a tracking mount, stars trail between frames, so the merge only denoises: the stars will not align as detail.',
+        'Shoot short-ish frames at moderate ISO rather than one long frame; avoid very high ISO banding that averaging cannot remove.',
+        'Pick Median for satellites and planes crossing the frame; they are movers and will not align.',
+        'With a tracking mount the stars hold still and you get the full denoise benefit.',
+        'Do not expect stacked star detail the way dedicated astro software does; this merge is for clean files, not a plate-solve replacement.',
+      ],
+      expect: 'Without a tracking mount the stars only denoise; with one they hold and you get the full benefit. Not a substitute for dedicated astro stacking.',
       mode: null,
     },
   ];

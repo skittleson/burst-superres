@@ -142,21 +142,26 @@ function createRaw() {
     return curve;
   }
 
-  /** Bayer data, Uint16Array rawWidth*rawHeight, in the 14-bit domain (black ~512). */
-  function decode(bytes, info) {
-    const W = info.rawWidth, H = info.rawHeight, out = new Uint16Array(W * H);
+  /** Bayer data, Uint16Array rawWidth*rawHeight, in the 14-bit domain (black ~512).
+   * With opts.rowStart/rowEnd, decodes only those rows into a Uint16Array of
+   * (rowEnd-rowStart)*rawWidth. */
+  function decode(bytes, info, opts = {}) {
+    const W = info.rawWidth, H = info.rawHeight;
+    const rowStart = opts.rowStart || 0, rowEnd = opts.rowEnd == null ? H : opts.rowEnd;
+    const out = new Uint16Array((rowEnd - rowStart) * W);
     let o = info.stripOffset;
     if (info.compression === 1) {
-      const le = bytes[0] === 0x49;
-      for (let i = 0; i < W * H; i++, o += 2) out[i] = le ? bytes[o] | (bytes[o + 1] << 8) : (bytes[o] << 8) | bytes[o + 1];
+      const le = opts.le !== undefined ? opts.le : bytes[0] === 0x49;
+      o = info.stripOffset + rowStart * W * 2;
+      for (let i = rowStart; i < rowEnd; i++) for (let j = 0; j < W; j++, o += 2) out[(i - rowStart) * W + j] = le ? bytes[o] | (bytes[o + 1] << 8) : (bytes[o] << 8) | bytes[o + 1];
       return out;
     }
     if (info.stripBytes !== W * H) throw new Error('Unexpected compressed ARW size; this camera variant is not supported.');
     const curve = sonyCurve(info.toneCurve || [8000, 10400, 12900, 14100]);
     const pix = new Uint16Array(16);
     const g2 = (p) => bytes[p] | (bytes[p + 1] << 8);
-    for (let row = 0; row < H; row++) {
-      const base = row * W;
+    for (let row = rowStart; row < rowEnd; row++) {
+      const base = (row - rowStart) * W;
       let dp = o + row * W;
       for (let col = 0; col < W - 30; dp += 16) {
         const val = (bytes[dp] | (bytes[dp + 1] << 8) | (bytes[dp + 2] << 16) | (bytes[dp + 3] << 24)) >>> 0;
@@ -177,6 +182,11 @@ function createRaw() {
       }
     }
     return out;
+  }
+
+  /** Decode rows [rowStart, rowEnd) of the ARW into a fresh Uint16Array. */
+  function decodeRange(bytes, info, rowStart, rowEnd) {
+    return decode(bytes, info, { rowStart, rowEnd });
   }
 
   // ---------- render: demosaic + white balance + color + sRGB ----------
@@ -372,7 +382,7 @@ function createRaw() {
     return out;
   }
 
-  return { parse, decode, render, demosaic, finisher, levels, autoExposure, orient, headerInfo, sonyDecrypt, sonyCurve, isRawName };
+  return { parse, decode, decodeRange, render, demosaic, finisher, levels, autoExposure, orient, headerInfo, sonyDecrypt, sonyCurve, isRawName };
 }
 
 if (typeof module === 'object' && module.exports) module.exports = createRaw();

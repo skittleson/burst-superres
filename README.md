@@ -221,7 +221,7 @@ Times are node 25 (V8) on this machine (24 threads), with 3000 x 1688 or 3000 x 
 What the numbers say:
 
 - The gain over one upscaled photo is **+0.7 to +1.3 dB**. That is real but modest.
-- Without added noise the gain is still +0.7 to +0.9 dB. So part of the gain is real detail (less aliasing), not only noise reduction.
+- Without added noise the gain is still +0.7 to +1.0 dB. So part of the gain is real detail (less aliasing), not only noise reduction.
 - 8 frames are a little better than 4 (+1.30 vs +1.07 dB on the same scene).
 - Alignment error stayed at or below 0.03 px in every run, including the rotated bursts.
 - Mean is the best method in every run, so it is the default. Median is 0.1 dB lower but resists moving objects. Pairwise is 0.01 to 0.02 dB lower than mean.
@@ -272,7 +272,9 @@ Gains are found to within 0.001. Without flicker it changes nothing (a6400-s2-no
 | A6000 landscape, + lens blur 0.7 px | 32.34 | 33.26 | **34.02** | 0.25 (32.80) |
 | A6000 landscape, point sampling (narrower than the model) | **30.96** | 30.38 | 29.36 | 0.25 (30.74) |
 | A6400 photo, sensor box only | 39.84 | **39.91** | 39.85 | 0 (39.84) |
-| One photo alone, landscape | 33.51 | 33.56 | 32.72 | |
+| One photo alone, landscape† | 33.51 | 33.56 | 32.72 | |
+
+† This one run was measured at the time but its JSON is not in `docs/results/`; the other rows are all reproducible from the archived runs.
 
 - It needs the burst: on one photo alone it gains nothing or loses.
 - "Auto" (hold-out: leave out the best-aligned photo, deblur the merge of the rest, check which amount predicts the left-out photo best) is conservative. It never picked a harmful amount except in the point-sampling case (-0.22 dB), which is narrower than any real sensor.
@@ -323,7 +325,7 @@ I found the real burst in my Immich library. I searched for bursts: 732 groups o
 
 ### A method that did not help: shift-and-add
 
-I also tried true shift-and-add: put every input pixel at its exact sub-pixel position on the 2x grid with a small Gaussian kernel, then normalize. On test patterns with strong aliasing it beat the mean by 1.0 to 1.7 dB. On the real photos it was equal to the mean on the whole image. On the detailed landscape crop it was 0.2 dB worse with 4 frames and 0.5 dB worse with 8 frames. I removed it from the app. The numbers are in `docs/results/v1-translation-only/`, from an earlier translation-only build.
+I also tried true shift-and-add: put every input pixel at its exact sub-pixel position on the 2x grid with a small Gaussian kernel, then normalize. On the real photos it was equal to the mean on the whole image with 4 frames (within 0.03 dB) and 0.2 dB worse with 8. On the detailed landscape crop it was 0.2 dB worse with 4 frames and 0.5 dB worse with 8 frames. I removed it from the app. The numbers are in `docs/results/v1-translation-only/`, from an earlier translation-only build.
 
 ## How it works
 

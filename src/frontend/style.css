@@ -14,7 +14,7 @@
   /* text */
   --text: #dde0e6;
   --text-dim: #aab0bb;
-  --muted: #7d8492;
+  --muted: #9aa1ad;
   /* one accent, tuned for contrast on dark */
   --accent: #e8a23a;
   --accent-hi: #f2b558;
@@ -261,4 +261,10 @@ button.primary:hover:not(:disabled) { background: var(--accent-hi); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+
+/* touch targets: 44px on coarse pointers */
+@media (pointer: coarse) {
+  button, select, .scene-chip, .cam-count, .cam-lens, .cam-lens.on { min-height: 44px; }
+  .scene-chip { padding-top: 10px; padding-bottom: 10px; }
 }

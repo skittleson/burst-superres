@@ -18,9 +18,6 @@ header .get-app { margin-left: auto; font-size: 13px; white-space: nowrap; }
 .offline-note { color: var(--soft); white-space: nowrap; }
 .offline-note[hidden] { display: none; }
 
-.drop button.sample { background: none; border: none; color: var(--accent); padding: 0; font-size: 13px; }
-.drop button.sample:hover:not(:disabled) { background: none; text-decoration: underline; }
-
 /* Scene picker: chips choose a scene, its guide shows right below. Sits
  * between the drop zone and the settings, so guidance comes before merging. */
 .scene-pick { display: block; margin-top: 14px; }
@@ -56,6 +53,15 @@ body.has-camera .scene-shoot { display: inline-block; margin-left: 8px; backgrou
 
 /* One column below 960px: the page scrolls, the panels stack, and the compare
  * view keeps enough height to be useful on a phone. */
+@media (max-width: 959px) {
+  /* 44px touch targets on the narrow/mobile layout */
+  button, select { min-height: 44px; }
+  .scene-chip, .cam-count, .cam-lens { min-height: 44px; }
+  .scene-chip { padding-top: 10px; padding-bottom: 10px; }
+  .footer-link, footer a { min-height: 44px; display: inline-flex; align-items: center; padding: 8px 4px; font-size: 14px; }
+  button.primary { color: #101216; }
+}
+
 @media (max-width: 960px), (max-height: 640px) {
   body { overflow: auto; height: auto; min-height: 100%; }
   header { padding: 14px 16px 8px; }
@@ -65,7 +71,7 @@ body.has-camera .scene-shoot { display: inline-block; margin-left: 8px; backgrou
   .note { margin-top: 12px; }
 
   /* touch-friendly controls */
-  button, select { min-height: 38px; }
+  button, select { min-height: 44px; }
   .drop { padding: 26px 14px 22px; }
   .drop-buttons { flex-direction: column; gap: 10px; width: 100%; }
   .drop-buttons button { width: 100%; }
@@ -83,4 +89,17 @@ body.has-camera .scene-shoot { display: inline-block; margin-left: 8px; backgrou
 @media (max-width: 480px) {
   h1 span { display: none; }
   .nav canvas { width: 86px; }
+}
+
+.drop button.sample {
+  display: inline-block; margin-top: 10px; padding: 11px 14px; min-height: 44px;
+  border: 1px solid var(--accent); border-radius: var(--r-sm);
+  background: var(--accent-dim); color: var(--accent); font-weight: 600; text-align: center;
+}
+.drop button.sample:hover:not(:disabled) { background: #4a3a1d; text-decoration: none; }
+.drop button.sample:disabled { opacity: .45; }
+
+/* collapse-ish: on mobile keep the guide preview bounded instead of a wall of text */
+@media (max-width: 959px) {
+  .scene-guide { max-height: 150px; overflow: hidden; }
 }
