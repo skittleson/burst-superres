@@ -182,6 +182,10 @@ button.primary:hover:not(:disabled) { background: var(--accent-hi); }
 #warnings details { font-size: 12.5px; color: var(--soft); background: var(--soft-bg); border-radius: var(--r-sm); padding: 7px 11px; margin-bottom: 6px; }
 #warnings summary { cursor: pointer; font-weight: 600; }
 #warnings details p { color: #d4c294; margin-top: 5px; }
+.advice {
+  font-size: 12.5px; font-weight: 600; color: var(--accent);
+  background: var(--accent-dim); border-radius: var(--r-sm); padding: 7px 11px; margin-bottom: 8px;
+}
 .note { font-size: 12.5px; color: var(--text-dim); background: var(--sunken); border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: 9px 13px; margin-top: auto; }
 .note summary { cursor: pointer; font-weight: 600; color: var(--text); }
 .note p { margin-top: 7px; }

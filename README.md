@@ -30,7 +30,7 @@ Works in desktop Chrome, Edge or Firefox, and on Android Chrome. A full-size mer
 
 On a phone, the web app can also **take the burst for you**: tap **Shoot a burst with the camera** (or "Shoot a night burst" in the Night guide), pick 4 to 8 frames, tap the shutter — the app locks exposure and focus, counts 3-2-1, shoots full-resolution stills with the rear camera and merges them automatically. If your phone reports several rear lenses, you get a lens chooser, and **Max res** takes the largest still size your camera exposes (your 50 MP sensor, where the browser can reach it) with the burst capped at 4 frames so it still fits a phone's memory. Camera capture needs Chrome (Android or desktop); iOS Safari has no ImageCapture API, so the button does not appear there and everything else still works.
 
-Scene guides (Landscape, Night, Handheld) sit under the drop zone: pick your scene, get shooting tips and honest expectations for it.
+Scene guides (Landscape, Night, Handheld, City/street, Astro/night sky) sit under the drop zone: pick your scene, get shooting tips and honest expectations for it.
 
 The web version is a PWA: on a phone or desktop, use the browser's **Install** prompt to add it to your home screen or apps. Once installed it opens offline (the app itself is cached; the sample burst needs one download first; camera capture needs no special connection beyond permission).
 
@@ -123,6 +123,25 @@ No tripod: expect denoising more than detail.
 - **Short exposures freeze the wobble** better than long ones: at night, raise ISO a little rather than slowing the shutter.
 - **Big movements end up soft.** If a photo is badged "Too far off" the app unticks it; keep 4 or more that line up.
 - **Wide lenses align better than long ones** — lens parallax limits handheld detail.
+
+### City / street
+
+Near and far subjects with movement: Median helps, not detail from movers.
+
+- **Near and far subjects shift parallax between frames.** The sub-pixel offsets from slight hand movement are what become usable detail.
+- **Use a tripod or brace the camera.** Slight hand movement still helps, but big shakes soften the merge.
+- **Moving traffic and people ghost if you average.** Pick Median: it drops the movers outright instead of smearing them.
+- **Expect denoise and cleaner edges, not detail from moving cars** — a car in frame will not resolve into sharp parts.
+
+### Astro / night sky
+
+Stars on a tripod or tracking mount: denoise, not stacked star detail.
+
+- **Without a tracking mount, stars trail between frames**, so the merge only denoises: the stars will not align as detail.
+- **Shoot short-ish frames at moderate ISO** rather than one long frame; avoid very high ISO banding that averaging cannot remove.
+- **Pick Median for satellites and planes crossing the frame** — they are movers and will not align.
+- **With a tracking mount the stars hold still** and you get the full denoise benefit.
+- **Do not expect stacked star detail** the way dedicated astro software does; this merge is for clean files, not a plate-solve replacement. Without a mount the stars only denoise; with one they hold. Not a substitute for dedicated astro stacking.
 
 ## Examples
 
@@ -438,7 +457,7 @@ The code uses no platform-only APIs. `Uint8Array.prototype.toBase64` has a fallb
 - Test an A6400 ARW, and add Sony's lossless-compressed ARW.
 - Speed: RAW decoding, sharpness measuring and sharpening are still single-threaded; WebGL is untried.
 - Detail-aware (edge-stretched) kernels for the sensor-sample merge, as in Wronski et al.; this version uses round ones.
-- More scene guides (city, astro), and a first-visit prompt to pick one.
+- A first-visit prompt to pick a scene guide (City/street and Astro/night sky guides now exist alongside Landscape, Night and Handheld).
 - Camera capture: verify Max res actually reaches the 50 MP still on more phones (it worked on a Galaxy S25); iOS has no ImageCapture, so it stays Chrome-only unless a fallback is worth building.
 
 ## Credit

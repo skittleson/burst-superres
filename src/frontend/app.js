@@ -600,12 +600,12 @@ const mergeKey = () => photoKey() + '|' + state.photos.map((p) => +p.include).jo
 // One plain sentence for each setting, so nobody has to guess what a control
 // does before trying it.
 const MODE_HINT = {
-  mean: 'Averages the photos: least noise, the usual best choice.',
+  mean: 'Averages the photos: least noise, the usual best choice. Pick Median if something moved between shots.',
   median: 'Resists things that moved between shots (people, leaves), a little noisier.',
   pairwise: 'Blend of the two best-aligned photos, the method from the guide.',
 };
 const SHARPEN_HINT = {
-  off: 'Keeps the merge exactly as the photos were.',
+  off: 'Helps RAW files recover fine edges. Camera JPEGs are already sharpened, so it can make them worse — leave Off unless RAW.',
   auto: 'Tests a photo left out of the merge and picks a safe amount.',
   0.25: 'A light pass over flat areas and edges.',
   0.5: 'A visible pass on fine detail. Watch for grainy edges.',
@@ -623,6 +623,19 @@ function summaryText(details, refIndex) {
   const local = details.some((d) => d.mode === 'local');
   return `Camera moved up to ${move.toFixed(1)} px between shots` + (local ? ' (handheld correction used)' : '') +
     `. Worst alignment error: ${worst.toFixed(2)} px.`;
+}
+
+function methodAdvice(details, refIndex, sel) {
+  const used = details.map((d, i) => i).filter((i) => sel[i]);
+  const masked = used.filter((i) => i !== refIndex && details[i].badFraction > 0.02).length;
+  const softUsed = used.filter((i) => i !== refIndex && details[i].err > GOOD_PX).length;
+  if (masked >= 1 || softUsed >= 2) {
+    return 'Something moved between shots. Median will drop the moving parts cleanly — switch the method to Median.';
+  }
+  if (used.length >= 4) {
+    return 'These line up well — Mean is your best choice.';
+  }
+  return null;
 }
 
 function warningsFor(details, refIndex, sel) {
@@ -672,7 +685,9 @@ async function runMerge() {
       const sel = SR.defaultSelection(msg.details, msg.refIndex, GOOD_PX);
       msg.details.forEach((d, i) => { state.photos[i].detail = d; state.photos[i].include = sel[i]; });
       $('summary').textContent = summaryText(msg.details, msg.refIndex);
-      $('warnings').innerHTML = warningsFor(msg.details, msg.refIndex, sel)
+      const advice = methodAdvice(msg.details, msg.refIndex, sel);
+      const adviceHtml = advice ? `<p class="advice">${esc(advice)}</p>` : '';
+      $('warnings').innerHTML = adviceHtml + warningsFor(msg.details, msg.refIndex, sel)
         .map(([t, more]) => `<details><summary>${esc(t)}</summary><p>${esc(more)}</p></details>`).join('');
       renderList();
       if (sel.filter(Boolean).length < 2) {
@@ -1138,4 +1153,20 @@ tiny.api.call('selftestConfig').then(async (cfg) => {
   await tiny.store.set('selftest', report);
   if (cfg.holdMs) await new Promise((ok) => setTimeout(ok, cfg.holdMs));
   if (cfg.quit !== false) tiny.quit();
+});
+
+// iOS note: surfaces where the camera button is absent (no ImageCapture).
+// camera.js is web-only; desktop never loads it and this stays silent.
+window.addEventListener('load', () => {
+  try {
+    if (typeof createCameraBurst !== 'function') return;
+    if (!matchMedia('(pointer: coarse)').matches) return;
+    if (globalThis.ImageCapture) return;
+    if (document.getElementById('iosNote')) return;
+    const p = document.createElement('p');
+    p.id = 'iosNote';
+    p.className = 'advice';
+    p.textContent = createCameraBurst.cameraSupportNote();
+    $('drop').insertAdjacentElement('afterend', p);
+  } catch { /* never block the app */ }
 });
