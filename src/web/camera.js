@@ -23,8 +23,18 @@ function createCameraBurst(deps = {}) {
     try {
       stream = await Promise.race([env, timeout().then(() => { throw new Error('timeout'); })]);
     } catch {
+      // The late fallback stream could hang too: bound it the same way, and
+      // stop whichever request (first or fallback) ever resolves.
+      try {
+        stream = await Promise.race([
+          media.getUserMedia({ video: true }),
+          timeout().then(() => { throw new Error('timeout'); }),
+        ]);
+      } catch (e) {
+        env.then((s) => s.getTracks().forEach((t) => t.stop())).catch(() => {});
+        throw e;
+      }
       env.then((s) => s.getTracks().forEach((t) => t.stop())).catch(() => {});
-      stream = await media.getUserMedia({ video: true });
     }
     capture = new ImageCaptureCtor(stream.getVideoTracks()[0]);
     baseSize = null;
@@ -44,6 +54,10 @@ function createCameraBurst(deps = {}) {
         await capture.setOptions({ imageWidth: caps.imageWidth.max, imageHeight: caps.imageHeight.max });
       } else if (baseSize) {
         await capture.setOptions({ imageWidth: baseSize.imageWidth, imageHeight: baseSize.imageHeight });
+        // baseSize only held the first reading, so drop it: the next Max
+        // capture re-reads the preview's current size instead of restoring
+        // a stale one.
+        baseSize = null;
       }
     } catch { /* no size control on this camera */ }
   }
@@ -76,6 +90,8 @@ function createCameraBurst(deps = {}) {
       if (aborted) { close(); const e = new Error('Cancelled'); e.name = 'AbortError'; throw e; }
       try {
         const blob = await capture.takePhoto();
+        // A shot in flight when Cancel lands must not be saved.
+        if (aborted) { close(); const e = new Error('Cancelled'); e.name = 'AbortError'; throw e; }
         files.push(new File([blob], `burst-${i}.jpg`, { type: 'image/jpeg' }));
         onShot(i, total);
       } catch { failed++; }
@@ -92,7 +108,12 @@ function createCameraBurst(deps = {}) {
     return { files, shots: files.length, failed };
   }
 
-  function abort() { aborted = true; }
+  function abort() {
+    aborted = true;
+    // The last shot may still be in flight; tell ImageCapture to stop it
+    // too (rejects when idle, so guarded).
+    try { capture && capture.abort(); } catch { /* already done */ }
+  }
 
   function close() {
     if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; capture = null; }

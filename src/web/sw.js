@@ -25,6 +25,10 @@ self.addEventListener('activate', (e) => {
     for (const k of await caches.keys()) {
       if (k !== SHELL_CACHE && k !== RUN_CACHE) await caches.delete(k);
     }
+    // Clear the run cache too, even for the current build, so a redeploy of the
+    // same build id drops any stale app.js/sr-core.js entries. fetch
+    // repopulates it network-first.
+    await caches.delete(RUN_CACHE);
     await self.clients.claim();
   })());
 });
@@ -40,6 +44,23 @@ self.addEventListener('fetch', (e) => {
     // the offline path.
     e.respondWith(
       fetch(req).catch(async () => (await caches.match('./index.html')) || Response.error())
+    );
+    return;
+  }
+  // The sample burst loads samples.json then a run of samples/*.jpg, and
+  // build-web.js deliberately leaves samples/ out of the shell, so cache it
+  // first so the burst keeps working offline.
+  if (url.pathname.includes('/samples/') || url.pathname.endsWith('/samples')) {
+    e.respondWith(
+      caches.match(req).then(async (hit) => {
+        if (hit) return hit;
+        const res = await fetch(req);
+        if (res && res.ok) {
+          const copy = res.clone();
+          await caches.open(RUN_CACHE).then((c) => c.put(req, copy)).catch(() => { /* over quota: fine */ });
+        }
+        return res || Response.error();
+      })
     );
     return;
   }

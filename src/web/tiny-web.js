@@ -8,13 +8,15 @@ window.tiny = (() => {
   const files = new Map();     // path -> File
   const dirs = new Map();      // path -> [paths of the images directly inside]
   const urls = new Map();      // path -> object URL
-  const saves = new Map();     // save id -> { name, handle, parts }
+  const saves = new Map();     // save id -> { id, path, name, handle, parts }
   const handles = new Map();   // save path -> FileSystemFileHandle (Chromium's save dialog)
   const IMAGE_EXT = /\.(jpe?g|png|arw)$/i;
   let seq = 0, nextSave = 1;
 
   const addFile = (file, dirPath) => {
     const path = (dirPath || `web:${++seq}`) + '/' + file.name;
+    // Replacing a path drops the old File; release its object URL first.
+    if (files.has(path)) { URL.revokeObjectURL(urls.get(path)); urls.delete(path); }
     files.set(path, file);
     return path;
   };
@@ -76,6 +78,13 @@ window.tiny = (() => {
     return out;
   }
 
+  function nameFor(s) {
+    // The download fallback can't use the save dialog, so each save gets its
+    // own name to avoid overwriting the previous download.
+    const dot = s.name.lastIndexOf('.');
+    return dot > 0 ? s.name.slice(0, dot) + '-' + s.id + s.name.slice(dot) : s.name + '-' + s.id;
+  }
+
   function download(name, blob) {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -100,7 +109,7 @@ window.tiny = (() => {
     readRange: ({ path, offset, length }) => readRange(path, offset, Math.min(length, 8 << 20)),
     saveBegin({ path }) {
       const id = nextSave++;
-      saves.set(id, { name: path.split('/').pop(), handle: handles.get(path), parts: [] });
+      saves.set(id, { id, path, name: path.split('/').pop(), handle: handles.get(path), parts: [] });
       return id;
     },
     saveChunk({ id, b64 }) {
@@ -118,7 +127,8 @@ window.tiny = (() => {
         const w = await s.handle.createWritable();
         await w.write(blob);
         await w.close();
-      } else download(s.name, blob);
+        handles.delete(s.path);
+      } else download(nameFor(s), blob);
       return blob.size;
     },
     saveAbort({ id }) { return saves.delete(id); },

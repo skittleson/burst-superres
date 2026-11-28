@@ -44,7 +44,7 @@ const state = {
 // without one, everything runs here.
 function workerMain(SR, RAW) {
   let frames = null, raws = null, reg = null, orientation = 1, exposure = 1, refOriented = null, finish = null;
-  let pool = [], sceneKey = null;
+  let pool = [], sceneKey = null, curGen = null;
   // Decode a raw file, optionally band-parallelized across the helper pool.
   // Falls back to a serial decode of the whole file on any band error.
   const decodeRaw = async (bytes, info, pool) => {
@@ -116,7 +116,7 @@ function workerMain(SR, RAW) {
     report(1, 'Aligned');
     return { refIndex, warps: results.map((r) => r.warp), details: results, sharpness: sharp };
   };
-  const step = (phase) => (p, label) => postMessage({ type: 'progress', phase, p, label });
+  const step = (phase) => (p, label) => postMessage({ type: 'progress', phase, p, label, gen: curGen });
   const summary = (d, i, w, h) => {
     const W = d.warp, F = W.field, cx = (w - 1) / 2, cy = (h - 1) / 2;
     const [u, v] = SR.mapPoint(W, F, cx, cy);
@@ -131,6 +131,7 @@ function workerMain(SR, RAW) {
   const oriented = (img) => (orientation === 1 ? img : RAW.orient(img, orientation));
   self.onmessage = async (e) => {
     const msg = e.data;
+    if (msg.gen != null) curGen = msg.gen;
     try {
       if (msg.type === 'align') {
         pool = makePool(msg.ports || []); sceneKey = null;
@@ -152,7 +153,7 @@ function workerMain(SR, RAW) {
         reg = pool.length ? await alignPool(frames) : SR.registerBurst(frames, step('align'));
         refOriented = oriented(frames[reg.refIndex]);
         const { width: w, height: h } = frames[0];
-        postMessage({ type: 'aligned', refIndex: reg.refIndex, raw: !!raws, exposure, details: reg.details.map((d, i) => summary(d, i, w, h)) });
+        postMessage({ type: 'aligned', gen: curGen, refIndex: reg.refIndex, raw: !!raws, exposure, details: reg.details.map((d, i) => summary(d, i, w, h)) });
       } else if (msg.type === 'merge') {
         const idx = msg.selection.map((on, i) => (on || i === reg.refIndex ? i : -1)).filter((i) => i >= 0);
         const refK = idx.indexOf(reg.refIndex);
@@ -203,20 +204,20 @@ function workerMain(SR, RAW) {
             direct ? { mergeRegion: (keep, R) => mergeDirect(keep.map((k) => idx[k]), R) } : {});
           amount = pick.amount; picked = pick;
         }
-        postMessage({ type: 'progress', phase: 'merge', p: 1, label: 'Comparing with one photo' });
+        postMessage({ type: 'progress', phase: 'merge', p: 1, label: 'Comparing with one photo', gen: curGen });
         for (const mode of msg.modes) {
           let out = oriented(outs[mode]);
           if (amount > 0) out = SR.deblur(out, { amount, onProgress: step('sharpen') });
           const diff = SR.compareToSingle(out, refOriented);
-          postMessage({ type: 'result', mode, width: out.width, height: out.height, diff, direct: direct && mode === 'mean', buffer: out.data.buffer }, [out.data.buffer]);
+          postMessage({ type: 'result', mode, width: out.width, height: out.height, diff, direct: direct && mode === 'mean', buffer: out.data.buffer, gen: curGen }, [out.data.buffer]);
         }
-        postMessage({ type: 'merged', count: idx.length, sharpen: amount, auto: msg.sharpen === 'auto', pickNote: picked && picked.reason });
+        postMessage({ type: 'merged', count: idx.length, sharpen: amount, auto: msg.sharpen === 'auto', pickNote: picked && picked.reason, gen: curGen });
       } else if (msg.type === 'before' && reg) {
         const r = SR.resampleRegion(refOriented, { scale: 2, x: msg.x, y: msg.y, width: msg.width, height: msg.height });
-        postMessage({ type: 'before', id: msg.id, width: r.width, height: r.height, buffer: r.data.buffer }, [r.data.buffer]);
+        postMessage({ type: 'before', id: msg.id, width: r.width, height: r.height, buffer: r.data.buffer, gen: curGen }, [r.data.buffer]);
       }
     } catch (err) {
-      postMessage({ type: 'error', message: String((err && err.message) || err) });
+      postMessage({ type: 'error', message: String((err && err.message) || err), gen: curGen });
     }
   };
 }
@@ -275,6 +276,7 @@ const blobURL = (main) => URL.createObjectURL(new Blob(
   { type: 'text/javascript' }));
 const WORKER_URL = blobURL(workerMain), HELPER_URL = blobURL(helperMain);
 let worker = null, onWorker = () => {};
+let runGen = 0;
 
 // Helpers hold their own copy of the photos, so the pool is sized to memory.
 const HELPER_BYTES = 3e9, MAX_HELPERS = 8, MIN_POOL_PIXELS = 0.5e6;
@@ -304,6 +306,7 @@ function startWorker() {
   if (worker) worker.terminate();
   worker = new Worker(WORKER_URL);
   worker.onmessage = (e) => {
+    if (e.data.gen != null && e.data.gen !== runGen) return;   // stale reply from a cancelled run
     try { (e.data.type === 'before' ? showBefore : onWorker)(e.data); } catch (err) { onStage('error ' + err); fail(String((err && err.message) || err)); }
   };
   worker.onerror = (e) => fail('Worker error: ' + (e.message || e));
@@ -543,6 +546,7 @@ function setProgress(p) {
 }
 function setBusy(b) {
   state.busy = b;
+  document.body.classList.toggle('busy', b);
   $('cancel').hidden = !b;
   $('saveJpg').disabled = $('savePng').disabled = $('remerge').disabled = b;
   renderList();
@@ -694,6 +698,7 @@ async function runMerge() {
   if (4 * w * h > MAX_OUTPUT_PIXELS) return fail(`Photos up to ${Math.floor(MAX_OUTPUT_PIXELS / 4e6)} MP are supported (the 2× result must fit in one canvas).`);
 
   setBusy(true);
+  runGen++;   // one generation per run; stale worker replies are dropped
   $('estimate').textContent = '';
   setProgress(0);
   const started = performance.now();
@@ -741,7 +746,7 @@ async function runMerge() {
   let pending = {};
   const requestMerge = () => {
     pending = {};
-    worker.postMessage({ type: 'merge', selection: state.photos.map((p) => p.include), modes: modesWanted(), sharpen: sharpenWanted(), rawDirectMin: RAW_DIRECT_MIN });
+    worker.postMessage({ type: 'merge', gen: runGen, selection: state.photos.map((p) => p.include), modes: modesWanted(), sharpen: sharpenWanted(), rawDirectMin: RAW_DIRECT_MIN });
   };
 
   if (!needAlign) return requestMerge();
@@ -750,7 +755,7 @@ async function runMerge() {
   let frames;
   try { frames = await decodeAll(); } catch (e) { return fail('Could not read the photos: ' + e); }
   const ports = startHelpers(poolSize(frames.length, w, h, !!state.photos[0].raw));
-  worker.postMessage({ type: 'align', frames, ports }, [...frames.map((f) => f.buffer), ...ports]);
+  worker.postMessage({ type: 'align', gen: runGen, frames, ports }, [...frames.map((f) => f.buffer), ...ports]);
 }
 
 function cancelMerge() {
@@ -864,7 +869,7 @@ function renderCompare() {
   } else {
     $('before').getContext('2d').clearRect(0, 0, c.w, c.h);
     $('tagBefore').textContent = state.aligned && state.aligned.raw ? 'Before: one RAW photo, demosaiced, enlarged 2×' : 'Before: one photo, enlarged 2×';
-    worker.postMessage({ type: 'before', id: ++state.beforeReq, x: c.x, y: c.y, width: c.w, height: c.h });
+    worker.postMessage({ type: 'before', gen: runGen, id: ++state.beforeReq, x: c.x, y: c.y, width: c.w, height: c.h });
   }
   $('tagAfter').style.left = isSide() ? `${c.w * c.css + 16}px` : '';
   $('tagAfter').style.right = isSide() ? 'auto' : '';

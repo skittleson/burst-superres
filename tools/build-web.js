@@ -67,8 +67,15 @@ function stampServiceWorker(out) {
   const sw = path.join(out, 'sw.js');
   let text = fs.readFileSync(sw, 'utf8');
   const shell = fs.readdirSync(out)
-    .filter((n) => !n.startsWith('.') && n !== 'sw.js' && n !== 'samples' && fs.statSync(path.join(out, n)).isFile())
-    .map((n) => JSON.stringify('./' + n));
+    .filter((n) => !n.startsWith('.') && n !== 'sw.js' && n !== 'samples')
+    .flatMap((n) => {
+      const p = path.join(out, n);
+      if (fs.statSync(p).isFile()) return ['./' + n];
+      if (n === 'fonts' || n === 'icons')
+        return fs.readdirSync(p).map((f) => './' + n + '/' + f);
+      return [];
+    })
+    .map((u) => JSON.stringify(u));
   text = text.replace("'__BUILD__'", JSON.stringify(process.env.GITHUB_SHA || require('crypto')
     .createHash('sha1').update(shell.join('|')).digest('hex').slice(0, 12)));
   text = text.replace(/\/\*__SHELL__\*\/\s*\[[\s\S]*?\]\s*\/\*__SHELL__\*\//, () => '/*__SHELL__*/[' + shell.join(', ') + ']/*__SHELL__*/');
