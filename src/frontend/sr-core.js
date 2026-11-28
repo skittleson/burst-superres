@@ -312,6 +312,21 @@ function createSRCore() {
             w00 * F.dy[k00] + w10 * F.dy[k10] + w01 * F.dy[k01] + w11 * F.dy[k11]];
   }
 
+  // Bilinear coverage weight of the cell mask at reference point (x, y): 1 well
+  // inside accepted cells, 0 well inside rejected ones, smooth in between
+  // (kills the square edges of the per-cell exclusion mask).
+  function okAt(F, x, y) {
+    const gx = clamp((x - F.x0) / F.T, 0, F.nx - 1), gy = clamp((y - F.y0) / F.T, 0, F.ny - 1);
+    const i = Math.min(Math.floor(gx), F.nx - 2 < 0 ? 0 : F.nx - 2), j = Math.min(Math.floor(gy), F.ny - 2 < 0 ? 0 : F.ny - 2);
+    const fx = F.nx > 1 ? gx - i : 0, fy = F.ny > 1 ? gy - j : 0;
+    const i1 = Math.min(i + 1, F.nx - 1), j1 = Math.min(j + 1, F.ny - 1);
+    const v = (1 - fx) * (1 - fy) * F.ok[j * F.nx + i] + fx * (1 - fy) * F.ok[j * F.nx + i1]
+      + (1 - fx) * fy * F.ok[j1 * F.nx + i] + fx * fy * F.ok[j1 * F.nx + i1];
+    if (v === 1) return 1;
+    const t = clamp((v - 0.25) / 0.5, 0, 1);
+    return t * t * (3 - 2 * t);
+  }
+
   // Frame coordinates of reference point (x, y) through affine W plus field F.
   function mapPoint(W, F, x, y) {
     if (!F) return applyWarp(W, x, y);
@@ -360,6 +375,23 @@ function createSRCore() {
     const refPyrs = [];
     for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
       refPyrs.push(buildPyramid(cropLuma(refL, ox + i * T, oy + j * T, T, T), 24));
+    }
+    // Per-cell high-frequency noise level of the reference tile (std of the
+    // tile minus its 3x3 box blur). Noise sits in both frames, so a flat-but-
+    // grainy sky cell's residual RMS is set by this floor; a moving object is
+    // frame-only signal and leaves the reference (hence nz) low, so it stays
+    // flagged. Used to scale the bad-cell threshold on high-ISO photos.
+    const cellNoise = new Float32Array(n);
+    {
+      const bl = new Float32Array(T * T), tmp = new Float32Array(T * T);
+      for (let k = 0; k < n; k++) {
+        const tile = cropLuma(refL, ox + (k % nx) * T, oy + ((k / nx) | 0) * T, T, T);
+        blur3(tile.d, T, T, bl, tmp);
+        let s = 0, s2 = 0;
+        for (let m = 0; m < T * T; m++) { const hp = tile.d[m] - bl[m]; s += hp; s2 += hp * hp; }
+        const mn = s / (T * T);
+        cellNoise[k] = Math.sqrt(Math.max(0, s2 / (T * T) - mn * mn));
+      }
     }
     // One pass: measure each cell through the current mapping. The frame
     // tile sampled reference point x at L(x), so the cell maps x ↦ L(x + p).
@@ -417,7 +449,10 @@ function createSRCore() {
     let sse = 0, cnt = 0, bad = 0;
     cells.forEach((c, k) => {
       const e = Math.hypot(c.qx, c.qy);
-      const isBad = good[k] ? (e > CELL_BAD_PX || c.rms > Math.max(6, 2.5 * rmsMed)) : false;
+      // noise-adaptive floor: on high-ISO photos a flat-but-grainy cell's
+      // residual RMS sits above the fixed floor, so raise it to 3× that cell's
+      // reference-tile noise level (a moving object keeps nz low → still bad).
+      const isBad = good[k] ? (e > CELL_BAD_PX || c.rms > Math.max(3 * cellNoise[k], 2.5 * rmsMed)) : false;
       if (isBad) { F.ok[k] = 0; bad++; }
       if (good[k] && !isBad) { sse += e * e; cnt++; }
     });
@@ -654,8 +689,9 @@ function createSRCore() {
    * warpStrip for any warp: affine-only warps go straight through; a warp
    * with a local field is rendered in CHUNK-wide column blocks, each through
    * the affine that matches the field at the block centre (the field is smooth
-   * over a block, so the seams are far below a pixel). Pixels in cells the
-   * field flagged as misaligned get valid = 0.
+   * over a block, so the seams are far below a pixel). `valid` marks inside
+   * the frame; the cell exclusion mask is applied by the merge (feathered for
+   * mean, hard for median).
    */
   function renderStrip(img, warp, scale, X0, outW, Y0, Y1, out, valid) {
     renderStripRaw(img, warp, scale, X0, outW, Y0, Y1, out, valid);
@@ -678,10 +714,8 @@ function createSRCore() {
       for (let r = 0; r < rows; r++) {
         out.set(buf.subarray(r * cw * 3, (r + 1) * cw * 3), (r * outW + c0) * 3);
         if (!valid) continue;
-        const y = (Y0 + r + 0.5) / scale - 0.5, j = clamp(Math.round((y - F.y0) / F.T), 0, F.ny - 1);
         for (let x = 0; x < cw; x++) {
-          const i = clamp(Math.round(((X0 + c0 + x + 0.5) / scale - 0.5 - F.x0) / F.T), 0, F.nx - 1);
-          valid[r * outW + c0 + x] = F.ok[j * F.nx + i] ? vbuf[r * cw + x] : 0;
+          valid[r * outW + c0 + x] = vbuf[r * cw + x];
         }
       }
     }
@@ -734,7 +768,7 @@ function createSRCore() {
     const outs = Object.fromEntries(modes.map((m) => [m, new Uint8ClampedArray(W * H * 4)]));
     const strips = frames.map(() => new Float32Array(stripRows * line));
     const valid = frames.map(() => new Uint8Array(stripRows * W));
-    const res = new Float32Array(stripRows * line), vals = new Float32Array(N);
+    const res = new Float32Array(stripRows * line), vals = new Float32Array(N), weights = new Float64Array(N);
 
     for (let Y0 = 0; Y0 < H; Y0 += stripRows) {
       const Y1 = Math.min(H, Y0 + stripRows), n = (Y1 - Y0) * W;
@@ -757,14 +791,56 @@ function createSRCore() {
           writeRGB(level[0], outs[mode], Y0 * W, n);
           continue;
         }
-        // The reference always counts; other frames only where they cover the pixel.
-        for (let i = 0; i < n; i++) {
-          for (let ch = 0; ch < 3; ch++) {
-            const q = i * 3 + ch;
-            let m = 0;
-            for (let k = 0; k < N; k++) if (k === refIndex || valid[k][i]) vals[m++] = strips[k][q];
-            if (mode === 'mean') { let s = 0; for (let t = 0; t < m; t++) s += vals[t]; res[q] = s / m; }
-            else res[q] = median(vals, m);
+        // The reference always counts; other frames are weighted by coverage
+        // (the feathered cell mask), so gating ramps across cell borders
+        // instead of switching off in hard 64 px squares. Median keeps the
+        // hard 0/1 gate.
+        if (mode === 'mean') {
+          for (let i = 0; i < n; i++) {
+            let sw = 0;
+            for (let k = 0; k < N; k++) {
+              let wk;
+              if (k === refIndex) wk = 1;
+              else if (!valid[k][i]) wk = 0;
+              else {
+                const F = warps[k].field;
+                if (F) {
+                  const x = (R.x + (i % W) + 0.5) / scale - 0.5, y = (R.y + Y0 + ((i / W) | 0) + 0.5) / scale - 0.5;
+                  wk = okAt(F, x, y);
+                } else wk = 1;
+              }
+              weights[k] = wk; sw += wk;
+            }
+            for (let ch = 0; ch < 3; ch++) {
+              const q = i * 3 + ch;
+              if (sw > 0) {
+                let s = 0;
+                for (let k = 0; k < N; k++) s += weights[k] * strips[k][q];
+                res[q] = s / sw;
+              } else res[q] = strips[refIndex][q];
+            }
+          }
+        } else {
+          // Median keeps the hard per-cell exclusion gate (a misaligned frame's
+          // samples are dropped outright, not down-weighted).
+          const fields = warps.map((w) => w.field);
+          for (let i = 0; i < n; i++) {
+            for (let ch = 0; ch < 3; ch++) {
+              const q = i * 3 + ch;
+              let m = 0;
+              for (let k = 0; k < N; k++) {
+                if (k === refIndex) { vals[m++] = strips[k][q]; continue; }
+                if (!valid[k][i]) continue;
+                const F = fields[k];
+                if (F) {
+                  const x = (R.x + (i % W) + 0.5) / scale - 0.5, y = (R.y + Y0 + ((i / W) | 0) + 0.5) / scale - 0.5;
+                  const ci = clamp(Math.round((x - F.x0) / F.T), 0, F.nx - 1), cj = clamp(Math.round((y - F.y0) / F.T), 0, F.ny - 1);
+                  if (!F.ok[cj * F.nx + ci]) continue;
+                }
+                vals[m++] = strips[k][q];
+              }
+              res[q] = median(vals, m);
+            }
           }
         }
         writeRGB(res, outs[mode], Y0 * W, n);
@@ -814,11 +890,11 @@ function createSRCore() {
           const L = F ? localAffineAt(warp, F, xc, yc) : warp;
           for (let Y = Y0; Y < Y1; Y++) {
             const y = (R.y + Y + 0.5) / scale - 0.5;
-            let cell = -1;
-            if (F && k !== refIndex) cell = clamp(Math.round((y - F.y0) / F.T), 0, F.ny - 1) * F.nx;
             for (let X = c0; X < c0 + cw; X++) {
               const x = (R.x + X + 0.5) / scale - 0.5;
-              if (cell >= 0 && !F.ok[cell + clamp(Math.round((x - F.x0) / F.T), 0, F.nx - 1)]) continue;
+              // feathered coverage of the cell mask instead of a hard skip
+              let okw = 1;
+              if (F && k !== refIndex) { const ww = okAt(F, x, y); if (!ww) continue; okw = ww; }
               const qx = L.a * x + L.b * y + L.c, qy = L.d * x + L.e * y + L.f;
               const ix = Math.round(qx), iy = Math.round(qy);
               if (ix < 1 || iy < 1 || ix > f.width - 2 || iy > f.height - 2) continue;
@@ -827,7 +903,7 @@ function createSRCore() {
                 const dy = qy - sy, row = sy * stride, crow = (sy & 1) * 2;
                 for (let sx = ix - 1; sx <= ix + 1; sx++) {
                   const dx = qx - sx, d2 = dx * dx + dy * dy;
-                  const wgt = lut[Math.min(LUTN, (d2 / LUTMAX * LUTN) | 0)], c = cfa[crow + (sx & 1)];
+                  const wgt = okw * lut[Math.min(LUTN, (d2 / LUTMAX * LUTN) | 0)], c = cfa[crow + (sx & 1)];
                   num[ob + c] += wgt * (d[row + sx] - bl[crow + (sx & 1)]) * g[c]; den[ob + c] += wgt;
                 }
               }

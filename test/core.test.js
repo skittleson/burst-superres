@@ -216,6 +216,27 @@ test('cells where something moved are left out of the merge (deghosting)', () =>
   assert.ok(SR.psnr(patch(m), patch(G)) > 35, `patch PSNR ${SR.psnr(patch(m), patch(G)).toFixed(1)} dB`);
 });
 
+test('mean merge feathers the cell-exclusion mask: no hard step across the cell border', () => {
+  const w = 128, h = 64, T = 32, nx = 5, ny = 3;
+  const flat = (v) => { const d = new Uint8ClampedArray(w * h * 4); for (let i = 0; i < w * h; i++) { d[i * 4] = v; d[i * 4 + 1] = v; d[i * 4 + 2] = v; d[i * 4 + 3] = 255; } return { width: w, height: h, data: d }; };
+  const A = flat(100), B = flat(200);                                  // frames 100 levels apart
+  // frame B carries a field rejecting the leftmost column of cells
+  const F = { T, nx, ny, x0: (T - 1) / 2, y0: (T - 1) / 2, dx: new Float32Array(nx * ny), dy: new Float32Array(nx * ny), ok: new Uint8Array(nx * ny).fill(1) };
+  for (let j = 0; j < ny; j++) F.ok[j * nx] = 0;
+  const m = SR.merge([A, B], [SR.IDENTITY, { ...SR.IDENTITY, field: F }], { scale: 1, mode: 'mean' });
+  // a line across the border of the rejected cell column (cell centre j*nx at x = x0 = 15.5)
+  const row = 32;
+  const val = (X) => m.data[(row * w + X) * 4];
+  let maxStep = 0;
+  for (let X = 4; X < 40; X++) maxStep = Math.max(maxStep, Math.abs(val(X + 1) - val(X)));
+  // hard 0/1 gating jumps by half the A/B difference (~50) at the cell border;
+  // feathering ramps it far below that.
+  assert.ok(maxStep < (200 - 100) / 4, `maxStep ${maxStep}`);
+  // far inside the rejected region B must still be excluded, far outside averaged
+  assert.ok(Math.abs(val(0) - 100) <= 1, `inside rejected ${val(0)}`);
+  assert.ok(Math.abs(val(100) - 150) <= 1, `outside ${val(100)}`);
+});
+
 test('verdict thresholds: good <= 0.3 px, soft <= 1 px, bad above', () => {
   assert.deepEqual([0, 0.3, 0.31, 1, 1.01].map(SR.verdictFor), ['good', 'good', 'soft', 'soft', 'bad']);
 });
